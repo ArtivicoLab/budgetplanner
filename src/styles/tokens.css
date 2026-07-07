@@ -1,0 +1,216 @@
+/* ============================================================
+   Design tokens — Budget Planner
+   Theme "Eucalyptus Ledger" (light, default) and "Ember" (dark).
+   An elegant paper-ledger look: warm ivory paper, deep eucalyptus teal
+   (primary UI), terracotta (secondary accents), antique gold eyebrows,
+   sage green for money / income / on-track, and a soft berry red for
+   over-budget / negatives. Calm, warm, sophisticated — deliberately not
+   a "pink app", and no decorative fonts: Inter/system sans everywhere.
+   Selected via data-theme on <html>; "auto" follows OS.
+   ============================================================ */
+
+:root {
+  /* ---- Category pastels (shared, tuned per theme below) ---- */
+  /* These 5 are reserved for the 5 built-in default categories (see FIXED in
+     lib/ui.ts) — never hash a user-created category into these, or it'll be
+     visually indistinguishable from a default one. Coordinated warm-pastel
+     set (blush / sage / lilac / champagne / powder), RGB-distance-checked
+     (≥35) against each other, matching the discipline of the previous set.
+     Pastels are FILLS under --ink only. */
+  --cat-pink: #f5c6d3; /* blush (Growth) */
+  --cat-teal: #cfe6cf; /* sage (Health) */
+  --cat-lavender: #dcc4f2; /* lilac (Home) */
+  --cat-butter: #f0e3c0; /* champagne (Finance) */
+  --cat-sky: #c5ddf0; /* powder (Work) */
+  /* Reserved for user-created custom categories (hash-assigned, see
+     EXTENDED_PASTELS in lib/ui.ts) — a separate pool so a custom category
+     never collides with one of the 5 defaults above. */
+  --cat-mint: #cdeadd;
+  --cat-rose: #f3c9d6;
+  --cat-gold: #f5dfa8;
+  --cat-plum: #ddd0ea;
+  --cat-steel: #c3d6e0;
+  --cat-clay: #f0d3c2;
+  /* Text-safe deep versions of the pastels above — the pastels are for
+     fills under --ink only; anything rendered AS text/icon color must use
+     these instead (≥4.5:1 on --bg in both themes). */
+  --cat-pink-ink: #a24864;
+  --cat-sky-ink: #3b679e;
+
+  /* ---- Calendar "source" dots (Tasks/Bills/Goals/Fitness filter row) ----
+     Deliberately NOT --cat-* — deeper/more saturated so the row reads as a
+     different "kind" of chip at a glance (see previous distance notes). */
+  --src-task: #3488b2;
+  --src-bill: #313672;
+  --src-goal: #b1438d;
+  --src-fitness: #428a66;
+
+  /* ---- Priority ramp (Task priority filter/picker) ----
+     Kept distinct from category/status/sync colors (distance-checked set). */
+  --pri-verylow: #85add6;
+  --pri-low: #6c9b4b;
+  --pri-medium: #aa7418;
+  --pri-high: #ee8a5b;
+  --pri-veryhigh: #7e252c;
+
+  /* ---- Radii — crisper corners for the ledger look ---- */
+  --r-card: 12px;
+  --r-input: 10px;
+  --r-pill: 999px;
+
+  /* ---- Spacing scale ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* ---- Type — one clean, readable sans everywhere ---- */
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    Roboto, system-ui, sans-serif;
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 300ms;
+
+  /* ---- Safe-area (iOS notch / home indicator) ---- */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ---------- Eucalyptus Ledger (light) ---------- */
+:root,
+:root[data-theme="light"] {
+  --bg: #f7f3ee;
+  /* Paper wash: faint eucalyptus at the top settling into warm ivory */
+  --bg-grad: linear-gradient(
+    180deg,
+    #eef2ec 0%,
+    #f8f4ed 45%,
+    #f6f1e9 100%
+  );
+  --surface: #fffefb; /* ivory paper */
+  --surface-2: #f1ece3;
+  --ink: #33302b; /* warm charcoal ink */
+  /* Brand hues hold WCAG AA 4.5:1 as text against the lightest surface.
+     Ratios noted per token (vs #fffefb). */
+  --muted: #6e685e; /* warm stone — ~5.3:1 */
+  --hairline: #e6dfd4;
+  --accent: #16616b; /* deep eucalyptus teal — ~6.6:1 */
+  /* terracotta used for eyebrows/subheads and secondary emphasis */
+  --accent-2: #a9532c; /* terracotta — ~5.1:1 */
+  --accent-soft: #ddece9; /* pale eucalyptus tint */
+  --gold: #96660f; /* antique gold — eyebrows/details; ~4.9:1 */
+  --success: #2f7047; /* sage green — money / income / on-track; ~5.9:1 */
+  --success-soft: #e3efe3;
+  --alert: #b23a48; /* soft berry — over-budget / negative; ~5.6:1 */
+  --alert-soft: #f9e3e5;
+  --warn: #96660f; /* bronze; ~4.9:1 */
+  --shadow: 0 6px 24px rgba(51, 45, 34, 0.09);
+  --shadow-sm: 0 2px 8px rgba(51, 45, 34, 0.06);
+  --scrim: rgba(43, 38, 30, 0.36);
+  color-scheme: light;
+}
+
+/* ---------- Ember (dark) — the ledger by lamplight ---------- */
+:root[data-theme="dark"] {
+  --bg: #171512;
+  --bg-grad: linear-gradient(180deg, #1e1b17 0%, #171512 55%, #110f0d 100%);
+  --surface: #211e1a;
+  --surface-2: #2b2722;
+  --ink: #f0ece4; /* warm cream text */
+  --muted: #a09a8e;
+  --hairline: #363129;
+  --accent: #6cc3b4; /* eucalyptus, brightened for dark */
+  --accent-2: #e0906a; /* terracotta, brightened */
+  --accent-soft: #14352f; /* deep eucalyptus tint */
+  --gold: #d9a84e;
+  --success: #7dc493; /* sage — money / income / on-track */
+  --success-soft: #1e3527;
+  --alert: #e88592; /* berry — over-budget / negative */
+  --alert-soft: #402428;
+  --warn: #d9a84e;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.34);
+  --scrim: rgba(0, 0, 0, 0.58);
+  color-scheme: dark;
+
+  --cat-pink: #c77583;
+  --cat-teal: #75c7ac;
+  --cat-lavender: #8375c7;
+  --cat-butter: #c4c775;
+  --cat-sky: #75acc7;
+  --cat-mint: #6fae8f;
+  --cat-rose: #c97d95;
+  --cat-gold: #c9a15b;
+  --cat-plum: #a48fc7;
+  --cat-steel: #7a9bb8;
+  --cat-clay: #cf9878;
+  /* On dark, the mid-tone pastels themselves pass as text */
+  --cat-pink-ink: #cd8fa2;
+  --cat-sky-ink: #8bacd4;
+
+  --src-task: #6989d3;
+  --src-bill: #4d58cb;
+  --src-goal: #b472ca;
+  --src-fitness: #53ac5a;
+
+  --pri-verylow: #61c8d1;
+  --pri-low: #86b464;
+  --pri-medium: #b6aa20;
+  --pri-high: #ee8a5b;
+  --pri-veryhigh: #cb4d58;
+}
+
+/* Follow OS when data-theme="auto" (or unset by app boot) */
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --bg: #171512;
+    --bg-grad: linear-gradient(180deg, #1e1b17 0%, #171512 55%, #110f0d 100%);
+    --surface: #211e1a;
+    --surface-2: #2b2722;
+    --ink: #f0ece4;
+    --muted: #a09a8e;
+    --hairline: #363129;
+    --accent: #6cc3b4;
+    --accent-2: #e0906a;
+    --accent-soft: #14352f;
+    --gold: #d9a84e;
+    --success: #7dc493;
+    --success-soft: #1e3527;
+    --alert: #e88592;
+    --alert-soft: #402428;
+    --warn: #d9a84e;
+    --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+    --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.34);
+    --scrim: rgba(0, 0, 0, 0.58);
+    color-scheme: dark;
+
+    --cat-pink: #c77583;
+    --cat-teal: #75c7ac;
+    --cat-lavender: #8375c7;
+    --cat-butter: #c4c775;
+    --cat-sky: #75acc7;
+    --cat-mint: #6fae8f;
+    --cat-rose: #c97d95;
+    --cat-gold: #c9a15b;
+    --cat-plum: #a48fc7;
+    --cat-steel: #7a9bb8;
+    --cat-clay: #cf9878;
+    --cat-pink-ink: #cd8fa2;
+    --cat-sky-ink: #8bacd4;
+
+    --src-task: #6989d3;
+    --src-bill: #4d58cb;
+    --src-goal: #b472ca;
+    --src-fitness: #53ac5a;
+
+    --pri-verylow: #61c8d1;
+    --pri-low: #86b464;
+    --pri-medium: #b6aa20;
+    --pri-high: #ee8a5b;
+    --pri-veryhigh: #cb4d58;
+  }
+}
