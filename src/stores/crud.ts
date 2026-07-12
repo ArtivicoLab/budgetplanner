@@ -2,12 +2,16 @@
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import * as db from "../lib/db";
 import { newId, nowIso } from "../lib/id";
+import { recordTombstone } from "../lib/tombstones";
 import { useSync } from "./useSync";
 
 export interface CrudState<T> {
   items: T[];
   setAll: (items: T[]) => void;
   add: (patch: Partial<T>) => T;
+  /** Bulk insert — one state update + one IndexedDB write for the whole batch
+      (used by CSV import so a few hundred rows don't trigger N re-renders). */
+  addMany: (patches: Partial<T>[]) => T[];
   update: (id: string, patch: Partial<T>) => void;
   remove: (id: string) => void;
 }
@@ -27,8 +31,20 @@ export function createCrud<T extends Base>(
       const item = { ...blank(), id: newId(), createdAt: ts, updatedAt: ts, ...patch } as T;
       set({ items: [...get().items, item] });
       void db.put(collection, item);
-      useSync.getState().touch();
+      useSync.getState().touch(collection);
       return item;
+    },
+
+    addMany: (patches) => {
+      if (patches.length === 0) return [];
+      const ts = nowIso();
+      const created = patches.map(
+        (patch) => ({ ...blank(), id: newId(), createdAt: ts, updatedAt: ts, ...patch } as T)
+      );
+      set({ items: [...get().items, ...created] });
+      void db.putMany(collection, created);
+      useSync.getState().touch(collection);
+      return created;
     },
 
     update: (id, patch) => {
@@ -41,13 +57,15 @@ export function createCrud<T extends Base>(
         }),
       });
       if (updated) void db.put(collection, updated);
-      useSync.getState().touch();
+      useSync.getState().touch(collection);
     },
 
     remove: (id) => {
       set({ items: get().items.filter((it) => it.id !== id) });
       void db.remove(collection, id);
-      useSync.getState().touch();
+      recordTombstone(collection, id);
+      useSync.getState().touch(collection);
+      useSync.getState().touch("tombstones");
     },
   }));
 }

@@ -4,11 +4,11 @@
 
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import { DB_NAME, DB_VERSION } from "./config";
-import type { BudgetPeriod, Debt, Fund, MoneyRow } from "./types";
+import type { Account, BudgetPeriod, Debt, Fund, MoneyRow, NetWorthItem, Recurring, Transaction } from "./types";
 
-export type Collection = "periods" | "money" | "funds" | "debts";
+export type Collection = "periods" | "money" | "funds" | "debts" | "transactions" | "accounts" | "networth" | "recurring";
 
-export const ALL_COLLECTIONS: Collection[] = ["periods", "money", "funds", "debts"];
+export const ALL_COLLECTIONS: Collection[] = ["periods", "money", "funds", "debts", "transactions", "accounts", "networth", "recurring"];
 
 export interface SyncOp {
   opId: string;
@@ -24,6 +24,10 @@ interface UB extends DBSchema {
   money: { key: string; value: MoneyRow };
   funds: { key: string; value: Fund };
   debts: { key: string; value: Debt };
+  transactions: { key: string; value: Transaction };
+  accounts: { key: string; value: Account };
+  networth: { key: string; value: NetWorthItem };
+  recurring: { key: string; value: Recurring };
   kv: { key: string; value: unknown };
   queue: { key: string; value: SyncOp };
 }
@@ -34,7 +38,7 @@ function db(): Promise<IDBPDatabase<UB>> {
   if (!dbp) {
     dbp = openDB<UB>(DB_NAME, DB_VERSION, {
       upgrade(d) {
-        for (const name of ["periods", "money", "funds", "debts"] as const) {
+        for (const name of ["periods", "money", "funds", "debts", "transactions", "accounts", "networth", "recurring"] as const) {
           if (!d.objectStoreNames.contains(name)) {
             d.createObjectStore(name, { keyPath: "id" });
           }

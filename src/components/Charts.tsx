@@ -15,12 +15,15 @@ export function Donut({
   size = 120,
   thickness = 18,
   center,
+  formatValue,
 }: {
   slices: Slice[];
   size?: number;
   thickness?: number;
   center?: React.ReactNode;
+  formatValue?: (n: number) => string;
 }) {
+  const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
   const total = slices.reduce((a, s) => a + Math.max(0, s.value), 0) || 1;
   let acc = 0;
   const stops = slices
@@ -39,7 +42,7 @@ export function Donut({
   return (
     <div className="chart-donut">
       <div
-        className="chart-donut__ring"
+        className="chart-donut__ring charttip-host"
         role="img"
         aria-label={summary || "No data"}
         style={{
@@ -47,10 +50,43 @@ export function Donut({
           height: size,
           background: total > 0 ? `conic-gradient(${stops})` : "var(--surface-2)",
         }}
+        onPointerMove={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          const x = e.clientX - r.left;
+          const y = e.clientY - r.top;
+          const dx = x - size / 2;
+          const dy = y - size / 2;
+          const dist = Math.hypot(dx, dy);
+          // only the ring band, not the hole or the corners
+          if (dist < size / 2 - thickness || dist > size / 2) { setHover(null); return; }
+          const deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90; // 0° at 12 o'clock
+          const angle = (deg + 360) % 360;
+          let a = 0;
+          let i = -1;
+          for (let k = 0; k < slices.length; k++) {
+            a += (Math.max(0, slices[k].value) / total) * 360;
+            if (angle <= a) { i = k; break; }
+          }
+          setHover(i >= 0 ? { i, x, y } : null);
+        }}
+        onPointerLeave={() => setHover(null)}
       >
         <div className="chart-donut__hole" style={{ inset: thickness }}>
           {center}
         </div>
+        {hover && slices[hover.i] && (
+          <ChartTip
+            x={hover.x}
+            y={hover.y}
+            plotW={size}
+            title={slices[hover.i].label}
+            rows={[{
+              color: slices[hover.i].color,
+              label: "Share",
+              value: `${Math.round((Math.max(0, slices[hover.i].value) / total) * 100)}%${formatValue ? ` · ${formatValue(slices[hover.i].value)}` : ""}`,
+            }]}
+          />
+        )}
       </div>
       <div className="chart-donut__legend">
         {slices.map((s) => (
@@ -73,15 +109,42 @@ export function Donut({
  * a single-value "donut" that isn't really a chart.
  */
 export function StatusBar({ segments }: { segments: Slice[] }) {
+  const [hover, setHover] = useState<{ i: number; x: number; y: number; w: number } | null>(null);
   const shown = segments.filter((s) => s.value > 0);
   const total = shown.reduce((a, s) => a + s.value, 0) || 1;
   const summary = shown.map((s) => `${s.label} ${s.value}`).join(", ");
   return (
     <div>
-      <div className="chart-statusbar__track" role="img" aria-label={summary || "No data"}>
+      <div
+        className="chart-statusbar__track charttip-host"
+        role="img"
+        aria-label={summary || "No data"}
+        onPointerMove={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          const x = e.clientX - r.left;
+          // find the segment under the pointer by cumulative share of the width
+          let acc = 0;
+          let i = shown.length - 1;
+          for (let k = 0; k < shown.length; k++) {
+            acc += (shown[k].value / total) * r.width;
+            if (x <= acc) { i = k; break; }
+          }
+          setHover({ i, x, y: e.clientY - r.top, w: r.width });
+        }}
+        onPointerLeave={() => setHover(null)}
+      >
         {shown.map((s) => (
-          <div key={s.label} title={`${s.label}: ${s.value}`} style={{ flex: s.value, background: s.color }} />
+          <div key={s.label} style={{ flex: s.value, background: s.color }} />
         ))}
+        {hover && shown[hover.i] && (
+          <ChartTip
+            x={hover.x}
+            y={hover.y}
+            plotW={hover.w}
+            title={shown[hover.i].label}
+            rows={[{ color: shown[hover.i].color, label: "Value", value: String(shown[hover.i].value) }]}
+          />
+        )}
       </div>
       <div className="chart-statusbar__legend">
         {shown.map((s) => (
@@ -103,16 +166,33 @@ export interface BarDatum {
 }
 
 /** Horizontal comparison bars (budget vs actual style). */
-export function Bars({ data, max }: { data: BarDatum[]; max?: number }) {
+export function Bars({
+  data,
+  max,
+  formatValue = (n: number) => String(Math.round(n)),
+}: {
+  data: BarDatum[];
+  max?: number;
+  formatValue?: (n: number) => string;
+}) {
+  const [hover, setHover] = useState<{ i: number; x: number; y: number; w: number } | null>(null);
   const top = max ?? Math.max(1, ...data.map((d) => d.value));
   return (
     <div className="chart-bars">
-      {data.map((d) => (
-        <div key={d.label}>
+      {data.map((d, i) => (
+        <div
+          key={d.label}
+          className="charttip-host"
+          onPointerMove={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setHover({ i, x: e.clientX - r.left, y: e.clientY - r.top, w: r.width });
+          }}
+          onPointerLeave={() => setHover(null)}
+        >
           <div className="spread row-label-12">
             <span className="muted">{d.label}</span>
           </div>
-          <div className="pbar" role="img" aria-label={`${d.label}: ${d.value}`}>
+          <div className="pbar" role="img" aria-label={`${d.label}: ${formatValue(d.value)}`}>
             <div
               className="pbar__fill"
               style={{
@@ -121,6 +201,15 @@ export function Bars({ data, max }: { data: BarDatum[]; max?: number }) {
               }}
             />
           </div>
+          {hover?.i === i && (
+            <ChartTip
+              x={hover.x}
+              y={hover.y}
+              plotW={hover.w}
+              title={d.label}
+              rows={[{ color: d.color ?? "var(--accent)", label: "Value", value: formatValue(d.value) }]}
+            />
+          )}
         </div>
       ))}
     </div>
@@ -134,7 +223,14 @@ export interface GroupedDatum {
 }
 
 /** Paired horizontal bars per category — "Budget vs Actual" style comparisons. */
-export function GroupedBars({ data }: { data: GroupedDatum[] }) {
+export function GroupedBars({
+  data,
+  formatValue = (n: number) => String(Math.round(n)),
+}: {
+  data: GroupedDatum[];
+  formatValue?: (n: number) => string;
+}) {
+  const [hover, setHover] = useState<{ i: number; x: number; y: number; w: number } | null>(null);
   const top = Math.max(1, ...data.flatMap((d) => [d.budget, d.actual]));
   return (
     <div className="chart-groupedbars">
@@ -148,15 +244,35 @@ export function GroupedBars({ data }: { data: GroupedDatum[] }) {
           <span className="muted">Actual</span>
         </span>
       </div>
-      {data.map((d) => (
-        <div key={d.label}>
+      {data.map((d, i) => (
+        <div
+          key={d.label}
+          className="charttip-host"
+          onPointerMove={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setHover({ i, x: e.clientX - r.left, y: e.clientY - r.top, w: r.width });
+          }}
+          onPointerLeave={() => setHover(null)}
+        >
           <div className="chart-groupedbars__label">{d.label}</div>
-          <div className="pbar mb-1" role="img" aria-label={`${d.label} budget: ${d.budget}`}>
+          <div className="pbar mb-1" role="img" aria-label={`${d.label} budget: ${formatValue(d.budget)}`}>
             <div className="pbar__fill pbar__fill--budget" style={{ width: `${Math.min(100, (d.budget / top) * 100)}%` }} />
           </div>
-          <div className="pbar" role="img" aria-label={`${d.label} actual: ${d.actual}`}>
+          <div className="pbar" role="img" aria-label={`${d.label} actual: ${formatValue(d.actual)}`}>
             <div className="pbar__fill pbar__fill--actual" style={{ width: `${Math.min(100, (d.actual / top) * 100)}%` }} />
           </div>
+          {hover?.i === i && (
+            <ChartTip
+              x={hover.x}
+              y={hover.y}
+              plotW={hover.w}
+              title={d.label}
+              rows={[
+                { color: "var(--accent)", label: "Budget", value: formatValue(d.budget) },
+                { color: "var(--accent-2)", label: "Actual", value: formatValue(d.actual) },
+              ]}
+            />
+          )}
         </div>
       ))}
     </div>
@@ -174,29 +290,39 @@ export function Columns({
   color = "var(--accent)",
   min,
   max,
+  formatValue = (n: number) => String(Math.round(n)),
 }: {
   points: { label: string; value: number }[];
   height?: number;
   color?: string;
   min?: number;
   max?: number;
+  formatValue?: (n: number) => string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<Hover | null>(null);
   if (points.length === 0) return null;
   const vals = points.map((p) => p.value);
   const lo = min ?? Math.min(...vals);
   const hi = max ?? Math.max(...vals);
   const span = hi - lo || 1;
+  const n = points.length;
   return (
-    <div className="chart-columns" style={{ height }}>
+    <div
+      className="chart-columns charttip-host"
+      style={{ height }}
+      ref={ref}
+      onPointerMove={(e) => ref.current && setHover(hoverFromPointer(e, ref.current, n, ref.current.clientWidth, "slot"))}
+      onPointerLeave={() => setHover(null)}
+    >
       {points.map((p, i) => {
         const h = 18 + ((p.value - lo) / span) * (height - 30);
         return (
           <div key={i} className="chart-column">
             <div
-              title={`${p.label}: ${p.value}`}
               role="img"
-              aria-label={`${p.label}: ${p.value}`}
-              className="chart-column__bar"
+              aria-label={`${p.label}: ${formatValue(p.value)}`}
+              className={`chart-column__bar${hover?.i === i ? " chart-column__bar--hot" : ""}`}
               style={{
                 height: Math.max(2, h),
                 background: color,
@@ -209,6 +335,15 @@ export function Columns({
           </div>
         );
       })}
+      {hover && ref.current && (
+        <ChartTip
+          x={((hover.i + 0.5) / n) * ref.current.clientWidth}
+          y={hover.y}
+          plotW={ref.current.clientWidth}
+          title={points[hover.i].label}
+          rows={[{ color, label: "Value", value: formatValue(points[hover.i].value) }]}
+        />
+      )}
     </div>
   );
 }
@@ -263,14 +398,41 @@ export function LineChart({
   const gridCount = 4;
   const gridVals = Array.from({ length: gridCount + 1 }, (_, i) => lo + (span * (gridCount - i)) / gridCount);
 
+  const [hover, setHover] = useState<Hover | null>(null);
+
   return (
     <div className="linechart">
-      <div className="linechart__plot" ref={ref} style={{ height }}>
+      <div
+        className="linechart__plot"
+        ref={ref}
+        style={{ height }}
+        onPointerMove={(e) => ref.current && setHover(hoverFromPointer(e, ref.current, n, w, "point"))}
+        onPointerLeave={() => setHover(null)}
+      >
         {w > 0 && gridVals.map((gv, i) => (
           <div key={`g${i}`} className="linechart__grid" style={{ top: py(gv) }}>
             <span className="linechart__ylabel">{formatValue(gv)}</span>
           </div>
         ))}
+        {w > 0 && hover && (
+          <>
+            <div className="chart-crosshair" style={{ left: px(hover.i) }} />
+            {series.map((s) => (
+              <div
+                key={`h${s.label}`}
+                className="linechart__dot linechart__dot--hot"
+                style={{ left: px(hover.i), top: py(s.points[hover.i] ?? 0), borderColor: s.color }}
+              />
+            ))}
+            <ChartTip
+              x={px(hover.i)}
+              y={hover.y}
+              plotW={w}
+              title={xLabels[hover.i]}
+              rows={series.map((s) => ({ color: s.color, label: s.label, value: formatValue(s.points[hover.i] ?? 0) }))}
+            />
+          </>
+        )}
         {w > 0 && series.map((s) => {
           const pts = s.points.map((v, i) => ({ x: px(i), y: py(v) }));
           const areaClip = `polygon(${pts[0].x}px ${baseline}px, ${pts
@@ -309,13 +471,13 @@ export function LineChart({
         })}
       </div>
       <div className="linechart__xaxis" style={{ position: "relative", height: 16 }}>
-        {w > 0 && xLabels.map((l, i) => (
+        {w > 0 && tickIndices(n, w).map((i) => (
           <span
             key={`x${i}`}
             className="linechart__xlabel"
             style={{ left: px(i), transform: `translateX(${i === 0 ? "0" : i === n - 1 ? "-100%" : "-50%"})` }}
           >
-            {l}
+            {xLabels[i]}
           </span>
         ))}
       </div>
@@ -381,13 +543,17 @@ export function ComboChart({
   const span = hi - lo || 1;
   const padY = 10;
   const plotH = height - padY * 2;
-  const slotW = n > 0 ? w / n : 0;
-  const cx = (i: number) => slotW * (i + 0.5);
+  // Reserve a left gutter for the y-axis labels so bars/line never cover them.
+  const plotW = Math.max(1, w - AXIS_GUTTER);
+  const slotW = n > 0 ? plotW / n : 0;
+  const cx = (i: number) => AXIS_GUTTER + slotW * (i + 0.5);
   const py = (v: number) => padY + (1 - (v - lo) / span) * plotH;
   const baseY = py(0);
 
   const gridCount = 4;
   const gridVals = Array.from({ length: gridCount + 1 }, (_, i) => lo + (span * (gridCount - i)) / gridCount);
+
+  const [hover, setHover] = useState<Hover | null>(null);
 
   // Catmull-Rom spline sampled to dense points → straight micro-segments read
   // as a smooth curve without any SVG path.
@@ -417,12 +583,41 @@ export function ComboChart({
 
   return (
     <div className="linechart">
-      <div className="linechart__plot" ref={ref} style={{ height }}>
+      <div
+        className="linechart__plot"
+        ref={ref}
+        style={{ height }}
+        onPointerMove={(e) => ref.current && setHover(hoverFromPointer(e, ref.current, n, plotW, "slot", AXIS_GUTTER))}
+        onPointerLeave={() => setHover(null)}
+      >
         {w > 0 && gridVals.map((gv, i) => (
-          <div key={`g${i}`} className="linechart__grid" style={{ top: py(gv) }}>
-            <span className="linechart__ylabel">{formatValue(gv)}</span>
-          </div>
+          <div key={`g${i}`} className="linechart__grid" style={{ top: py(gv), left: AXIS_GUTTER }} />
         ))}
+        {w > 0 && gridVals.map((gv, i) => (
+          <span key={`yl${i}`} className="linechart__ylabel linechart__ylabel--axis" style={{ top: py(gv) }}>{formatValue(gv)}</span>
+        ))}
+        {w > 0 && hover && (
+          <>
+            <div className="chart-crosshair" style={{ left: cx(hover.i) }} />
+            {lines.map((line) => (
+              <div
+                key={`h${line.label}`}
+                className="linechart__dot linechart__dot--hot"
+                style={{ left: cx(hover.i), top: py(line.values[hover.i] ?? 0), borderColor: line.color }}
+              />
+            ))}
+            <ChartTip
+              x={cx(hover.i)}
+              y={hover.y}
+              plotW={w}
+              title={xLabels[hover.i]}
+              rows={[
+                ...bars.map((b) => ({ color: b.color, label: b.label, value: formatValue(b.values[hover.i] ?? 0) })),
+                ...lines.map((l) => ({ color: l.color, label: l.label, value: formatValue(l.values[hover.i] ?? 0) })),
+              ]}
+            />
+          </>
+        )}
 
         {/* bars */}
         {w > 0 && bars.length > 0 && xLabels.map((_, i) => {
@@ -479,13 +674,13 @@ export function ComboChart({
       </div>
 
       <div className="linechart__xaxis" style={{ position: "relative", height: 16 }}>
-        {w > 0 && xLabels.map((l, i) => (
+        {w > 0 && tickIndices(n, plotW, 40).map((i) => (
           <span
             key={`x${i}`}
             className="linechart__xlabel"
             style={{ left: cx(i), transform: "translateX(-50%)" }}
           >
-            {l}
+            {xLabels[i]}
           </span>
         ))}
       </div>
@@ -560,7 +755,75 @@ function strokePolygon(path: { x: number; y: number }[], width: number): string 
   return `polygon(${top.join(", ")}, ${bottom.reverse().join(", ")})`;
 }
 
+// ---------- Stock-chart-style hover (crosshair + value bubble) ----------
+// Shared by the x-slotted charts. Pure CSS/JS: a pointer handler computes the
+// hovered index, and a small absolutely-positioned bubble shows the values —
+// instant (no native-title delay), themed, and it flips sides near the edges.
+
+interface TipRow {
+  color?: string;
+  label: string;
+  value: string;
+}
+
+function ChartTip({
+  x,
+  y,
+  plotW,
+  title,
+  rows,
+}: {
+  x: number;
+  y: number;
+  plotW: number;
+  title: string;
+  rows: TipRow[];
+}) {
+  const flip = x > plotW * 0.55;
+  return (
+    <div
+      className="charttip"
+      style={{ left: x, top: y, transform: `translate(${flip ? "calc(-100% - 12px)" : "12px"}, -50%)` }}
+    >
+      <div className="charttip__title">{title}</div>
+      {rows.map((r) => (
+        <div key={r.label} className="charttip__row">
+          {r.color && <span className="charttip__swatch" style={{ background: r.color }} />}
+          <span className="charttip__label">{r.label}</span>
+          <span className="charttip__val">{r.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface Hover {
+  i: number;
+  y: number;
+}
+
+/** Pointer → hovered slot/point index within a measured plot. */
+function hoverFromPointer(
+  e: React.PointerEvent,
+  el: HTMLElement,
+  n: number,
+  plotW: number,
+  mode: "point" | "slot",
+  originX = 0
+): Hover | null {
+  const rect = el.getBoundingClientRect();
+  const x = e.clientX - rect.left - originX;
+  const y = e.clientY - rect.top;
+  if (n <= 0 || plotW <= 0 || x < -8 || x > plotW + 8) return null;
+  const i =
+    mode === "point"
+      ? Math.round((x / plotW) * (n - 1))
+      : Math.floor(x / (plotW / n));
+  return { i: Math.max(0, Math.min(n - 1, i)), y };
+}
+
 const AREA_GUTTER = 64; // right-hand price-axis pill column
+const AXIS_GUTTER = 48; // left-hand y-axis label column (ComboChart)
 
 /**
  * Yahoo-Finance-style area chart, pure CSS/JS (no SVG). Smooth gradient-filled
@@ -569,6 +832,27 @@ const AREA_GUTTER = 64; // right-hand price-axis pill column
  * an emphasized end-point marker. Built for a single running series like an
  * account balance over time.
  */
+/**
+ * Which x-axis label indices to actually render so they never overlap: keeps the
+ * first and last, then as many evenly-spaced labels in between as the width
+ * allows (each needs ~`minPx`). Below the cap every label shows.
+ */
+function tickIndices(n: number, plotW: number, minPx = 68): number[] {
+  if (n <= 0) return [];
+  if (n === 1) return [0];
+  const maxTicks = Math.max(2, Math.floor(plotW / minPx) + 1);
+  if (n <= maxTicks) return Array.from({ length: n }, (_, i) => i);
+  // Regular step (every k-th) reads as intentional — evenly distributing the
+  // ticks instead can drop scattered ones (e.g. only Nov + Apr on a 12-month
+  // axis). Always keep the first and last; drop the penultimate if it crowds.
+  const step = Math.ceil((n - 1) / (maxTicks - 1));
+  const out: number[] = [];
+  for (let i = 0; i < n - 1; i += step) out.push(i);
+  if (out.length && n - 1 - out[out.length - 1] < step) out.pop();
+  out.push(n - 1);
+  return out;
+}
+
 export function AreaChart({
   points,
   xLabels,
@@ -623,9 +907,17 @@ export function AreaChart({
   const gridVals = Array.from({ length: gridCount + 1 }, (_, i) => lo + (span * (gridCount - i)) / gridCount);
   const refY = referenceValue != null ? py(referenceValue) : null;
 
+  const [hover, setHover] = useState<Hover | null>(null);
+
   return (
     <div className="areachart">
-      <div className="areachart__plot" ref={ref} style={{ height }}>
+      <div
+        className="areachart__plot"
+        ref={ref}
+        style={{ height }}
+        onPointerMove={(e) => ref.current && setHover(hoverFromPointer(e, ref.current, n, plotW, "point"))}
+        onPointerLeave={() => setHover(null)}
+      >
         {w > 0 && gridVals.map((gv, i) => (
           <div key={`g${i}`} className="areachart__grid" style={{ top: py(gv), width: plotW }} />
         ))}
@@ -662,18 +954,36 @@ export function AreaChart({
             >
               {formatValue(lastVal)}
             </span>
+
+            {/* stock-style hover: crosshair + tracking dot + value bubble */}
+            {hover && (
+              <>
+                <div className="chart-crosshair" style={{ left: px(hover.i) }} />
+                <div
+                  className="linechart__dot linechart__dot--hot"
+                  style={{ left: px(hover.i), top: py(points[hover.i] ?? 0), borderColor: color }}
+                />
+                <ChartTip
+                  x={px(hover.i)}
+                  y={hover.y}
+                  plotW={plotW}
+                  title={xLabels[hover.i]}
+                  rows={[{ color, label: "Balance", value: formatValue(points[hover.i] ?? 0) }]}
+                />
+              </>
+            )}
           </>
         )}
       </div>
 
       <div className="areachart__xaxis" style={{ position: "relative", height: 16, width: plotW }}>
-        {w > 0 && xLabels.map((l, i) => (
+        {w > 0 && tickIndices(n, plotW).map((i) => (
           <span
             key={`x${i}`}
             className="linechart__xlabel"
             style={{ left: px(i), transform: `translateX(${i === 0 ? "0" : i === n - 1 ? "-100%" : "-50%"})` }}
           >
-            {l}
+            {xLabels[i]}
           </span>
         ))}
       </div>
@@ -705,6 +1015,8 @@ export function Stacked100({
   height?: number;
   formatValue?: (n: number) => string;
 }) {
+  const s100Ref = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<Hover | null>(null);
   if (columns.length === 0) return null;
   const legend = columns[0].parts;
   return (
@@ -717,7 +1029,13 @@ export function Stacked100({
           </span>
         ))}
       </div>
-      <div className="stacked100" style={{ height }}>
+      <div
+        className="stacked100 charttip-host"
+        style={{ height }}
+        ref={s100Ref}
+        onPointerMove={(e) => s100Ref.current && setHover(hoverFromPointer(e, s100Ref.current, columns.length, s100Ref.current.clientWidth, "slot"))}
+        onPointerLeave={() => setHover(null)}
+      >
         {columns.map((col, ci) => {
           const total = col.parts.reduce((a, p) => a + Math.max(0, p.value), 0) || 1;
           return (
@@ -730,7 +1048,6 @@ export function Stacked100({
                     <div
                       key={p.label}
                       className="stacked100__seg"
-                      title={`${col.label} · ${p.label}: ${formatValue(pct)}`}
                       style={{ height: `${pct}%`, background: p.color }}
                     />
                   );
@@ -740,6 +1057,23 @@ export function Stacked100({
             </div>
           );
         })}
+        {hover && s100Ref.current && (() => {
+          const col = columns[hover.i];
+          const total = col.parts.reduce((a, p) => a + Math.max(0, p.value), 0) || 1;
+          return (
+            <ChartTip
+              x={((hover.i + 0.5) / columns.length) * s100Ref.current.clientWidth}
+              y={hover.y}
+              plotW={s100Ref.current.clientWidth}
+              title={col.label}
+              rows={col.parts.map((p) => ({
+                color: p.color,
+                label: p.label,
+                value: formatValue((Math.max(0, p.value) / total) * 100),
+              }))}
+            />
+          );
+        })()}
       </div>
     </div>
   );
@@ -767,6 +1101,8 @@ export function StackedColumns({
   labelA?: string;
   labelB?: string;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [hover, setHover] = useState<Hover | null>(null);
   if (points.length === 0) return null;
   const max = Math.max(1, ...points.map((p) => p.a + p.b));
   return (
@@ -781,7 +1117,13 @@ export function StackedColumns({
           <span className="muted">{labelB}</span>
         </span>
       </div>
-      <div className="chart-columns" style={{ height }}>
+      <div
+        className="chart-columns charttip-host"
+        style={{ height }}
+        ref={ref}
+        onPointerMove={(e) => ref.current && setHover(hoverFromPointer(e, ref.current, points.length, ref.current.clientWidth, "slot"))}
+        onPointerLeave={() => setHover(null)}
+      >
         {points.map((p, i) => {
           const total = p.a + p.b;
           const totalH = total > 0 ? Math.max(4, (total / max) * (height - 20)) : 2;
@@ -790,7 +1132,6 @@ export function StackedColumns({
           return (
             <div key={i} className="chart-column">
               <div
-                title={`${p.label}: ${p.a} ${labelA.toLowerCase()}, ${p.b} ${labelB.toLowerCase()}`}
                 role="img"
                 aria-label={`${p.label}: ${p.a} ${labelA.toLowerCase()}, ${p.b} ${labelB.toLowerCase()}`}
                 className="chart-stackedcolumns__bar"
@@ -805,6 +1146,18 @@ export function StackedColumns({
             </div>
           );
         })}
+        {hover && ref.current && (
+          <ChartTip
+            x={((hover.i + 0.5) / points.length) * ref.current.clientWidth}
+            y={hover.y}
+            plotW={ref.current.clientWidth}
+            title={points[hover.i].label}
+            rows={[
+              { color: colorA, label: labelA, value: String(points[hover.i].a) },
+              { color: colorB, label: labelB, value: String(points[hover.i].b) },
+            ]}
+          />
+        )}
       </div>
     </div>
   );

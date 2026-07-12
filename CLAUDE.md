@@ -93,6 +93,13 @@ loses it). Connecting is a top-priority open task.
 - **Charts must be CSS/JS, not SVG and not a chart library.** Rings/donuts use CSS
   `conic-gradient`; bars/columns use flex divs. See `src/components/{ProgressRing,Charts}.tsx`.
   (recharts is in package.json but intentionally NOT imported — do not add it.)
+- **Every chart must have a stock-chart-style hover readout.** Hovering (or touch-
+  dragging) any bar, dot, line, segment or slice shows the exact value instantly in
+  the shared `ChartTip` bubble (`Charts.tsx`) — crosshair + tracking dot on line/area
+  charts, value bubble on bars/columns/stacks/donuts. Native `title` tooltips alone
+  are NOT acceptable (slow, unstyled). When adding a NEW chart component, wire in
+  `ChartTip`/`hoverFromPointer` and pass a `formatValue` (money formatter for money
+  values) — never ship a chart whose numbers can't be read on hover.
 - Icons should be a clean, simple standard set (lucide), not hand-drawn SVG paths.
 
 ## Tech stack (fixed — do not substitute)

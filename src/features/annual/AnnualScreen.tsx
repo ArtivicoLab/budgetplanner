@@ -69,7 +69,24 @@ export function AnnualScreen() {
     };
     const totalSpending = totals.bills + totals.expenses;
     const leftToSpend = totals.income - totals.bills - totals.expenses - totals.debt - totals.savings;
-    return { win, rows, totals, totalSpending, leftToSpend };
+
+    // Top spending categories: aggregate every non-income line item by name
+    // across the window (rows are per-period copies sharing a name).
+    const catMap = new Map<string, number>();
+    for (const p of win) {
+      for (const r of rowsFor(p.id)) {
+        if (r.kind === "income") continue;
+        const key = (r.name || r.category || "Other").trim() || "Other";
+        catMap.set(key, (catMap.get(key) ?? 0) + (r.actual || 0));
+      }
+    }
+    const topCategories = [...catMap.entries()]
+      .map(([label, value]) => ({ label, value }))
+      .filter((c) => c.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
+
+    return { win, rows, totals, totalSpending, leftToSpend, topCategories };
   }, [monthly, startIdx, rowsFor]);
 
   const [kind, setKind] = useState<Kind>("income");
@@ -92,7 +109,8 @@ export function AnnualScreen() {
     );
   }
 
-  const { rows, totals, totalSpending, leftToSpend } = view;
+  const { rows, totals, totalSpending, leftToSpend, topCategories } = view;
+  const topCatMax = topCategories[0]?.value || 1;
   const rangeLabel =
     rows.length > 0 ? `${rows[0].label} – ${rows[rows.length - 1].label}` : "";
   const pct = (n: number) => (totals.income > 0 ? Math.round((n / totals.income) * 100) : 0);
@@ -114,7 +132,7 @@ export function AnnualScreen() {
       </div>
 
       {/* window stepper */}
-      <div className="spread annual-range">
+      <div className="spread annual-range" data-tour="annual-range">
         <button className="btn btn--ghost annual-range__btn" disabled={!canPrev} onClick={() => setStartIdx((i) => Math.max(0, i - 1))} aria-label="Earlier 12 months">
           <IconChevron size={18} style={{ transform: "rotate(180deg)" }} />
         </button>
@@ -125,7 +143,7 @@ export function AnnualScreen() {
       </div>
 
       {/* four summary tiles: total + % of income */}
-      <div className="statgrid">
+      <div className="statgrid" data-tour="annual-stats">
         {(["bills", "expenses", "debt", "savings"] as const).map((k) => {
           const meta = KINDS.find((m) => m.key === k)!;
           return (
@@ -141,7 +159,7 @@ export function AnnualScreen() {
       </div>
 
       {/* headline stats strip */}
-      <div className="card annual-strip">
+      <div className="card annual-strip" data-tour="annual-strip">
         <div className="annual-strip__item">
           <span className="muted annual-strip__label">Left to spend</span>
           <span className={`annual-strip__val${leftToSpend < 0 ? " neg" : ""}`}>{fmtMoney(leftToSpend, currency)}</span>
@@ -155,19 +173,15 @@ export function AnnualScreen() {
           <span className="annual-strip__val">{fmtMoney(totalSpending, currency)}</span>
         </div>
         <div className="annual-strip__item">
-          <span className="muted annual-strip__label">Total saved</span>
-          <span className="annual-strip__val tile__value--success">{fmtMoney(totals.savings, currency)}</span>
-        </div>
-        <div className="annual-strip__item">
-          <span className="muted annual-strip__label">Total debt paid</span>
-          <span className="annual-strip__val">{fmtMoney(totals.debt, currency)}</span>
+          <span className="muted annual-strip__label">Net</span>
+          <span className={`annual-strip__val${totals.income - totalSpending < 0 ? " neg" : " tile__value--success"}`}>{fmtMoney(totals.income - totalSpending, currency)}</span>
         </div>
       </div>
 
       <div className="bento">
         {/* Monthly income vs spending */}
         <div className="bento__col">
-          <div className="card">
+          <div className="card" data-tour="annual-combo">
             <div className="section-title section-title--compact section-title--success">
               Monthly income vs spending
               <HelpTip text="Income (line) against everything going out (bars) each month of the window." />
@@ -182,7 +196,7 @@ export function AnnualScreen() {
           </div>
 
           {/* Monthly overview with kind switcher */}
-          <div className="card">
+          <div className="card" data-tour="annual-monthly">
             <div className="spread dash-chart-head">
               <div className="section-title section-title--flush">Monthly overview</div>
               <div className="annual-kindchips">
@@ -197,19 +211,21 @@ export function AnnualScreen() {
                 ))}
               </div>
             </div>
-            <Columns points={kindColumns} height={170} color={kindColor} min={0} />
+            <Columns points={kindColumns} height={170} color={kindColor} min={0} formatValue={(n) => fmtMoney(n, currency)} />
           </div>
         </div>
 
         {/* Allocation donut + end balance bars */}
         <div className="bento__col">
-          <div className="card">
+          <div className="card" data-tour="annual-allocation">
             <div className="section-title section-title--compact">
               Allocation
               <HelpTip text="Share of the year's money out across bills, expenses, debt and savings." />
             </div>
+            <div className="muted fs-12 annual-alloc-cap">Each slice's share of money out (not of income)</div>
             <Donut
               size={150}
+              formatValue={(n) => fmtMoney(n, currency)}
               slices={[
                 { label: "Bills", value: totals.bills, color: "var(--cat-sky)" },
                 { label: "Expenses", value: totals.expenses, color: "var(--cat-butter)" },
@@ -219,7 +235,7 @@ export function AnnualScreen() {
             />
           </div>
 
-          <div className="card">
+          <div className="card" data-tour="annual-endbalance">
             <div className="section-title section-title--compact">
               End balance by month
               <HelpTip text="What was left at the end of each month." />
@@ -228,13 +244,36 @@ export function AnnualScreen() {
               points={rows.map((r) => ({ label: r.short, value: r.end }))}
               height={150}
               color="var(--accent)"
+              formatValue={(n) => fmtMoney(n, currency)}
             />
           </div>
         </div>
       </div>
 
+      {/* Top spending categories */}
+      {topCategories.length > 0 && (
+        <div className="card" data-tour="annual-topcat">
+          <div className="section-title section-title--compact">
+            Top spending categories
+            <HelpTip text="Your biggest money-out line items across the window (bills, expenses and debt), largest first." />
+          </div>
+          <div className="topcat">
+            {topCategories.map((c, i) => (
+              <div key={c.label} className="topcat__row">
+                <span className="topcat__rank">{i + 1}</span>
+                <span className="topcat__name" title={c.label}>{c.label}</span>
+                <div className="topcat__barwrap">
+                  <div className="topcat__bar" style={{ width: `${(c.value / topCatMax) * 100}%` }} />
+                </div>
+                <span className="topcat__amt">{fmtMoney(c.value, currency)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Cash-flow summary ledger */}
-      <div className="card">
+      <div className="card" data-tour="annual-ledger">
         <div className="section-title section-title--compact">
           Cash-flow summary
           <HelpTip text="Every month's income, bills, expenses, debt, savings and end balance, with yearly totals and monthly averages." />

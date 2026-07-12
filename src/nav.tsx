@@ -9,6 +9,13 @@ import {
   IconCard,
   IconSettings,
   IconChart,
+  IconCalendar,
+  IconPie,
+  IconRepeat,
+  IconClock,
+  IconBank,
+  IconTrend,
+  IconUsers,
 } from "./components/icons";
 
 export interface NavItem {
@@ -29,11 +36,18 @@ export const NAV: NavGroup[] = [
     items: [
       { route: "dashboard", label: "Dashboard", Icon: IconHome, color: "var(--cat-sky)" },
       { route: "annual", label: "Annual", Icon: IconChart, color: "var(--cat-lavender)" },
+      { route: "calendar", label: "Calendar", Icon: IconCalendar, color: "var(--cat-pink)" },
+      { route: "fiftythirty", label: "50/30/20", Icon: IconPie, color: "var(--cat-teal)" },
     ],
   },
   {
     title: "Money",
     items: [
+      { route: "recurring", label: "Recurring", Icon: IconClock, color: "var(--cat-sky)" },
+      { route: "transactions", label: "Transactions", Icon: IconRepeat, color: "var(--cat-lavender)" },
+      { route: "accounts", label: "Accounts", Icon: IconBank, color: "var(--cat-sky)" },
+      { route: "networth", label: "Net Worth", Icon: IconTrend, color: "var(--cat-teal)" },
+      { route: "distribution", label: "Distribution", Icon: IconUsers, color: "var(--cat-lavender)" },
       { route: "budget", label: "Budget", Icon: IconBudget, color: "var(--cat-butter)" },
       { route: "savings", label: "Savings", Icon: IconPiggy, color: "var(--cat-teal)" },
       { route: "debt", label: "Debt Payoff", Icon: IconCard, color: "var(--cat-pink)" },

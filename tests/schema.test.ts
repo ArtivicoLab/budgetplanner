@@ -8,8 +8,10 @@ import {
   rowToFund,
   debtToRow,
   rowToDebt,
+  txnToRow,
+  rowToTxn,
 } from "../src/lib/schema";
-import type { BudgetPeriod, Debt, Fund, MoneyRow } from "../src/lib/types";
+import type { BudgetPeriod, Debt, Fund, MoneyRow, Transaction } from "../src/lib/types";
 
 describe("schema serialize -> deserialize roundtrip", () => {
   it("BudgetPeriod roundtrips", () => {
@@ -42,6 +44,7 @@ describe("schema serialize -> deserialize roundtrip", () => {
       createdAt: "a",
       updatedAt: "b",
       fundId: "",
+      bucket: "wants",
     };
     expect(rowToMoney(moneyToRow(m))).toEqual(m);
   });
@@ -65,6 +68,16 @@ describe("schema serialize -> deserialize roundtrip", () => {
       updatedAt: "b",
     };
     expect(rowToFund(fundToRow(f))).toEqual(f);
+  });
+
+  it("Transaction roundtrips incl. transfer fields", () => {
+    const t: Transaction = {
+      id: "t1", date: "2026-07-03", amount: 42.5, kind: "transfer",
+      category: "Card payment", account: "Checking", toAccount: "Credit Card",
+      spender: "Me", description: "monthly, on time", paid: true,
+      createdAt: "a", updatedAt: "b",
+    };
+    expect(rowToTxn(txnToRow(t))).toEqual(t);
   });
 
   it("Debt roundtrips including notes", () => {

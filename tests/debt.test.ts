@@ -84,4 +84,42 @@ describe("simulatePayoff", () => {
     expect(r.schedule[r.schedule.length - 1].balance).toBeCloseTo(0, 1);
     expect(r.schedule.every((row) => row.payment > 0)).toBe(true);
   });
+
+  it("startDate anchors the schedule labels and debt-free date", () => {
+    const r = simulatePayoff(
+      [debt({ currentBalance: 1000, apr: 0, minPayment: 100 })],
+      "snowball", 0, [], { startDate: "2026-01-01" }
+    );
+    expect(r.months).toBe(10);
+    expect(r.schedule[0].label).toBe("Jan 2026");
+    expect(r.schedule[0].adjKey).toBe("2026-01");
+    expect(r.debtFreeDate).toBe("2026-10-01");
+    expect(r.debtFreeLabel).toBe("Oct 2026");
+  });
+
+  it("a positive month adjustment pays down faster that month", () => {
+    const r = simulatePayoff(
+      [debt({ currentBalance: 1000, apr: 0, minPayment: 100 })],
+      "snowball", 0, [], { startDate: "2026-01-01", adjustments: { "2026-02": 500 } }
+    );
+    // base is 10 months; a +500 in Feb clears it in 5
+    expect(r.months).toBe(5);
+  });
+
+  it("a negative adjustment is floored at 0 payment (never negative)", () => {
+    const r = simulatePayoff(
+      [debt({ currentBalance: 1000, apr: 0, minPayment: 100 })],
+      "snowball", 0, [], { startDate: "2026-01-01", adjustments: { "2026-01": -1000 } }
+    );
+    expect(r.schedule[0].payment).toBe(0); // floored, not negative
+    expect(r.months).toBe(11); // one wasted month pushes payoff out by one
+  });
+
+  it("exposes a per-debt schedule that clears to zero", () => {
+    const r = simulatePayoff([debt({ id: "cc", currentBalance: 1000, apr: 12, minPayment: 100 })], "snowball", 0);
+    const rows = r.scheduleByDebt["cc"];
+    expect(rows.length).toBe(r.months);
+    expect(rows[rows.length - 1].balance).toBeCloseTo(0, 1);
+    expect(r.totalMinPayment).toBe(100);
+  });
 });

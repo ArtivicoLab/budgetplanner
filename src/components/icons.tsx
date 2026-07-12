@@ -4,6 +4,11 @@
 import {
   Home,
   BarChart3,
+  Landmark,
+  TrendingUp,
+  TrendingDown,
+  Users,
+  PieChart,
   ListTodo,
   CalendarDays,
   CircleCheck,
@@ -50,6 +55,11 @@ import {
 // ---- Navigation / UI ----
 export const IconHome = Home;
 export const IconChart = BarChart3;
+export const IconBank = Landmark;
+export const IconTrend = TrendingUp;
+export const IconTrendDown = TrendingDown;
+export const IconUsers = Users;
+export const IconPie = PieChart;
 export const IconTasks = ListTodo;
 export const IconCalendar = CalendarDays;
 export const IconHabits = CircleCheck;

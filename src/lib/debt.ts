@@ -7,9 +7,27 @@ export type Strategy = "snowball" | "avalanche" | "custom";
 export interface ScheduleRow {
   month: number; // 1-based
   label: string; // e.g. "Aug 2026"
+  adjKey: string; // "yyyy-MM" — key into the per-month adjustments map
   payment: number; // total paid across all debts this month
   interest: number; // total interest accrued this month
   balance: number; // total remaining balance after this month's payment
+}
+
+/** One debt's own month row (for the per-debt payoff schedule). */
+export interface DebtScheduleRow {
+  month: number;
+  label: string;
+  payment: number;
+  interest: number;
+  balance: number;
+}
+
+export interface PayoffOptions {
+  /** Repayment start month (anchors schedule labels + debt-free date). Default = today. */
+  startDate?: string;
+  /** Per-month repayment adjustment keyed by "yyyy-MM" — add or reduce the total
+   *  repayment for that month (their "+/−" feature). Total payment floored at 0. */
+  adjustments?: Record<string, number>;
 }
 
 export interface PayoffResult {
@@ -19,8 +37,11 @@ export interface PayoffResult {
   totalInterest: number;
   totalStart: number;
   totalCurrent: number;
+  totalMinPayment: number;
   payoffMonthByDebt: Record<string, number>; // debtId -> month index paid off
   schedule: ScheduleRow[]; // month-by-month amortization (capped at 600 months)
+  scheduleByDebt: Record<string, DebtScheduleRow[]>; // per-debt month rows
+  startDate: string; // resolved repayment start
 }
 
 /**
@@ -49,17 +70,23 @@ export function simulatePayoff(
   debts: Debt[],
   strategy: Strategy,
   monthlyExtra: number,
-  customOrder: string[] = []
+  customOrder: string[] = [],
+  opts: PayoffOptions = {}
 ): PayoffResult {
+  const start = opts.startDate || todayISO();
+  const adjustments = opts.adjustments ?? {};
+
   const totalStart = debts.reduce((a, d) => a + d.startBalance, 0);
   const totalCurrent = debts.reduce((a, d) => a + d.currentBalance, 0);
+  const totalMinPayment = debts.reduce((a, d) => a + d.minPayment, 0);
   const bal = new Map(debts.map((d) => [d.id, d.currentBalance]));
   const meta = new Map(debts.map((d) => [d.id, d]));
   const payoffMonthByDebt: Record<string, number> = {};
   const schedule: ScheduleRow[] = [];
+  const scheduleByDebt: Record<string, DebtScheduleRow[]> = {};
+  for (const d of debts) scheduleByDebt[d.id] = [];
 
-  const totalMin = debts.reduce((a, d) => a + d.minPayment, 0);
-  const budget = totalMin + Math.max(0, monthlyExtra);
+  const baseBudget = totalMinPayment + Math.max(0, monthlyExtra);
 
   let totalInterest = 0;
   let month = 0;
@@ -69,26 +96,39 @@ export function simulatePayoff(
 
   while (anyLeft() && month < MAX) {
     month++;
+    const monthDate = addMonthsISO(start, month - 1);
+    const label = format(fromISO(monthDate), "MMM yyyy");
+    const adjKey = format(fromISO(monthDate), "yyyy-MM");
+    const monthBudget = Math.max(0, baseBudget + (adjustments[adjKey] ?? 0));
+
+    const dInterest = new Map<string, number>();
+    const dPaid = new Map<string, number>();
+    // Debts with a balance at the start of this month get a per-debt row.
+    const activeAtStart = [...bal.entries()].filter(([, b]) => b > 0.005).map(([id]) => id);
+
     let monthInterest = 0;
     let monthPaid = 0;
 
     // 1) accrue interest
     for (const [id, b] of bal) {
       if (b <= 0.005) continue;
-      const apr = meta.get(id)!.apr;
-      const interest = (b * apr) / 1200;
+      const interest = (b * meta.get(id)!.apr) / 1200;
       monthInterest += interest;
       totalInterest += interest;
       bal.set(id, b + interest);
+      dInterest.set(id, interest);
     }
-    // 2) pay minimums
-    let available = budget;
+    // 2) pay minimums (capped by the month's budget so a negative adjustment
+    //    genuinely reduces that month's repayment; ≥ totalMin in the normal case
+    //    so this is identical to paying every minimum in full).
+    let available = monthBudget;
     for (const [id, b] of bal) {
       if (b <= 0.005) continue;
-      const pay = Math.min(b, meta.get(id)!.minPayment);
+      const pay = Math.min(b, meta.get(id)!.minPayment, Math.max(0, available));
       bal.set(id, b - pay);
       monthPaid += pay;
       available -= pay;
+      dPaid.set(id, (dPaid.get(id) ?? 0) + pay);
     }
     // 3) throw the rest at the priority debt(s)
     for (const d of priorityOrder(
@@ -103,30 +143,32 @@ export function simulatePayoff(
       bal.set(d.id, b - pay);
       monthPaid += pay;
       available -= pay;
+      dPaid.set(d.id, (dPaid.get(d.id) ?? 0) + pay);
     }
     // 4) record newly-cleared debts
     for (const [id, b] of bal) {
-      if (b <= 0.005 && payoffMonthByDebt[id] === undefined && (meta.get(id)!.currentBalance > 0)) {
+      if (b <= 0.005 && payoffMonthByDebt[id] === undefined && meta.get(id)!.currentBalance > 0) {
         payoffMonthByDebt[id] = month;
       }
     }
+    // 5) per-debt schedule rows
+    for (const id of activeAtStart) {
+      scheduleByDebt[id].push({
+        month,
+        label,
+        payment: dPaid.get(id) ?? 0,
+        interest: dInterest.get(id) ?? 0,
+        balance: Math.max(0, bal.get(id)!),
+      });
+    }
 
     const balance = [...bal.values()].reduce((a, b) => a + Math.max(0, b), 0);
-    schedule.push({
-      month,
-      label: format(fromISO(addMonthsISO(todayISO(), month)), "MMM yyyy"),
-      payment: monthPaid,
-      interest: monthInterest,
-      balance,
-    });
-
-    // Guard: if budget can't cover interest, we'll never finish.
-    if (month >= MAX) break;
+    schedule.push({ month, label, adjKey, payment: monthPaid, interest: monthInterest, balance });
   }
 
   const finished = !anyLeft();
   const months = finished ? month : Infinity;
-  const debtFreeDate = finished ? addMonthsISO(todayISO(), month) : "";
+  const debtFreeDate = finished ? addMonthsISO(start, month - 1) : "";
   const debtFreeLabel = finished ? format(fromISO(debtFreeDate), "MMM yyyy") : "—";
 
   return {
@@ -136,7 +178,10 @@ export function simulatePayoff(
     totalInterest,
     totalStart,
     totalCurrent,
+    totalMinPayment,
     payoffMonthByDebt,
     schedule,
+    scheduleByDebt,
+    startDate: start,
   };
 }

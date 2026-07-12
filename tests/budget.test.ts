@@ -29,6 +29,7 @@ function money(p: Partial<MoneyRow>): MoneyRow {
     createdAt: "",
     updatedAt: "",
     fundId: "",
+    bucket: "",
     ...p,
   };
 }
@@ -122,6 +123,21 @@ describe("computePeriodRange", () => {
   it("weekly spans 7 days", () => {
     const r = computePeriodRange("weekly", "2026-02-01");
     expect(r.endDate).toBe("2026-02-07");
+  });
+
+  it("semi-monthly splits the month at the 15th, clamping the second half", () => {
+    const firstHalf = computePeriodRange("semimonthly", "2026-04-05");
+    expect(firstHalf.startDate).toBe("2026-04-01");
+    expect(firstHalf.endDate).toBe("2026-04-15");
+    expect(firstHalf.label).toBe("Apr 1–15");
+
+    const secondHalf = computePeriodRange("semimonthly", "2026-04-20");
+    expect(secondHalf.startDate).toBe("2026-04-16");
+    expect(secondHalf.endDate).toBe("2026-04-30");
+
+    const feb = computePeriodRange("semimonthly", "2026-02-25");
+    expect(feb.endDate).toBe("2026-02-28"); // clamps to a short month
+    expect(feb.label).toBe("Feb 16–28");
   });
 
   it("paycheck and custom default to a single-day range with a friendly label", () => {

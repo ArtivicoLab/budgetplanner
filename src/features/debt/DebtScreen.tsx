@@ -4,11 +4,12 @@ import { Segmented } from "../../components/Segmented";
 import { EmptyState } from "../../components/EmptyState";
 import { CountUp } from "../../components/CountUp";
 import { Columns } from "../../components/Charts";
+import { ProgressRing } from "../../components/ProgressRing";
 import { HelpTip } from "../../components/HelpTip";
 import { IconCard, IconChevron, IconPlus } from "../../components/icons";
 import { useDebts } from "../../stores/v2";
 import { useSettings } from "../../stores/useSettings";
-import { simulatePayoff, type Strategy } from "../../lib/debt";
+import { simulatePayoff, type PayoffResult, type Strategy } from "../../lib/debt";
 import { money as fmtMoney, pct } from "../../lib/ui";
 import type { Debt } from "../../lib/types";
 
@@ -22,17 +23,28 @@ function effectiveOrder(items: Debt[], debtOrder: string[]): string[] {
 
 export function DebtScreen() {
   const { items, add, update, remove } = useDebts();
-  const { currency, debtStrategy, debtOrder, monthlyExtra, update: updateSettings } = useSettings();
+  const { currency, debtStrategy, debtOrder, monthlyExtra, debtStartDate, debtAdjustments, update: updateSettings } = useSettings();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<Debt | null>(null);
+  const [detail, setDetail] = useState<Debt | null>(null);
   const [showFullSchedule, setShowFullSchedule] = useState(false);
 
   const order = useMemo(() => effectiveOrder(items, debtOrder), [items, debtOrder]);
 
   const result = useMemo(
-    () => simulatePayoff(items, debtStrategy, monthlyExtra, order),
-    [items, debtStrategy, monthlyExtra, order]
+    () => simulatePayoff(items, debtStrategy, monthlyExtra, order, { startDate: debtStartDate || undefined, adjustments: debtAdjustments }),
+    [items, debtStrategy, monthlyExtra, order, debtStartDate, debtAdjustments]
   );
+
+  // Adjust one month's total repayment by ±delta (their "+/−" feature). Clearing
+  // back to 0 removes the key so the map stays tidy.
+  function adjustMonth(key: string, delta: number) {
+    const next = { ...debtAdjustments, [key]: (debtAdjustments[key] ?? 0) + delta };
+    if (Math.abs(next[key]) < 0.005) delete next[key];
+    updateSettings({ debtAdjustments: next });
+  }
+
+  const overallPaidPct = result.totalStart > 0 ? (result.totalStart - result.totalCurrent) / result.totalStart : 0;
 
   const payoffColumns = items
     .filter((d) => result.payoffMonthByDebt[d.id] !== undefined)
@@ -97,12 +109,39 @@ export function DebtScreen() {
                 </div>
               </div>
             </div>
+            <div className="debt-overview__stats">
+              <ProgressRing
+                value={overallPaidPct}
+                size={68}
+                stroke={7}
+                ariaLabel={`${Math.round(overallPaidPct * 100)}% paid off`}
+                center={<span className="txt-strong-800">{Math.round(overallPaidPct * 100)}%</span>}
+              />
+              <div className="debt-overview__statgrid">
+                <div>
+                  <div className="ov-cell__label">Paid off</div>
+                  <div className="ov-cell__value tile__value--success">{fmtMoney(result.totalStart - result.totalCurrent, currency)}</div>
+                </div>
+                <div>
+                  <div className="ov-cell__label">Total start</div>
+                  <div className="ov-cell__value">{fmtMoney(result.totalStart, currency)}</div>
+                </div>
+                <div>
+                  <div className="ov-cell__label">Min / month</div>
+                  <div className="ov-cell__value">{fmtMoney(result.totalMinPayment, currency)}</div>
+                </div>
+                <div>
+                  <div className="ov-cell__label">Months left</div>
+                  <div className="ov-cell__value">{Number.isFinite(result.months) ? result.months : "—"}</div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {payoffColumns.length > 0 && (
-            <div className="card">
+            <div className="card" data-tour="debt-chart">
               <div className="muted eyebrow-12 mb-3">MONTHS TO DEBT-FREE</div>
-              <Columns points={payoffColumns} height={120} color="var(--cat-teal)" />
+              <Columns points={payoffColumns} height={120} color="var(--cat-teal)" formatValue={(n) => `${Math.round(n)} mo`} />
             </div>
           )}
 
@@ -131,6 +170,19 @@ export function DebtScreen() {
                 onChange={(e) => updateSettings({ monthlyExtra: Number(e.target.value) || 0 })}
               />
             </div>
+            <div className="spread debt-extra-row">
+              <label htmlFor="debt-start-month" className="field__label field__label--flush">
+                Repayment starts
+                <HelpTip text="The month your payoff plan begins, so the schedule dates line up with when you actually start." />
+              </label>
+              <input
+                id="debt-start-month"
+                className="input debt-extra-input"
+                type="month"
+                value={debtStartDate ? debtStartDate.slice(0, 7) : ""}
+                onChange={(e) => updateSettings({ debtStartDate: e.target.value ? `${e.target.value}-01` : "" })}
+              />
+            </div>
 
             {debtStrategy === "custom" && (
               <div className="mt-4">
@@ -157,6 +209,7 @@ export function DebtScreen() {
             )}
           </div>
 
+          <div data-tour="debt-list">
           {sortedDebts.map((d) => {
             const paidPct = d.startBalance ? pct(d.startBalance - d.currentBalance, d.startBalance) : 0;
             const payoffMonth = result.payoffMonthByDebt[d.id];
@@ -164,7 +217,7 @@ export function DebtScreen() {
               <div className="card" key={d.id}>
                 <div className="spread">
                   <button className="debt-row-btn"
-                    onClick={() => { setEdit(d); setOpen(true); }}>
+                    onClick={() => setDetail(d)}>
                     <div className="txt-strong">{d.name}</div>
                     <div className="muted fs-12">
                       {d.apr}% APR · min {fmtMoney(d.minPayment, currency)}
@@ -196,25 +249,42 @@ export function DebtScreen() {
               </div>
             );
           })}
+          </div>
 
           {result.schedule.length > 0 && (
             <div className="card" data-tour="debt-schedule">
               <div className="section-title section-title--compact">Payment schedule</div>
-              <div className="col-stack">
+              <div className="muted fs-12 mb-2">
+                Tap − or + on any month to plan paying more or less that month.
+              </div>
+              <div className="debt-schedule-scroll">
+              <div className="col-stack col-stack--wide">
                 <div className="spread muted debt-schedule__head">
                   <span className="debt-col-month">MONTH</span>
                   <span className="debt-col-amt">PAYMENT</span>
                   <span className="debt-col-amt">INTEREST</span>
                   <span className="debt-col-bal">BALANCE</span>
+                  <span className="debt-col-adj">ADJUST</span>
                 </div>
-                {scheduleRows.map((r) => (
-                  <div key={r.month} className="spread debt-schedule__row">
-                    <span className="debt-col-month">{r.label}</span>
-                    <span className="debt-col-amt">{fmtMoney(r.payment, currency)}</span>
-                    <span className="debt-col-amt neg">{fmtMoney(r.interest, currency)}</span>
-                    <span className="debt-col-bal txt-strong">{fmtMoney(r.balance, currency)}</span>
-                  </div>
-                ))}
+                {scheduleRows.map((r) => {
+                  const adj = debtAdjustments[r.adjKey] ?? 0;
+                  return (
+                    <div key={r.month} className="spread debt-schedule__row">
+                      <span className="debt-col-month">{r.label}</span>
+                      <span className="debt-col-amt">{fmtMoney(r.payment, currency)}</span>
+                      <span className="debt-col-amt neg">{fmtMoney(r.interest, currency)}</span>
+                      <span className="debt-col-bal txt-strong">{fmtMoney(r.balance, currency)}</span>
+                      <span className="debt-col-adj debt-adj">
+                        <button className="debt-adj__btn" aria-label={`Reduce ${r.label} payment`} onClick={() => adjustMonth(r.adjKey, -50)}>−</button>
+                        <span className={`debt-adj__val${adj > 0 ? " pos" : adj < 0 ? " neg" : ""}`}>
+                          {adj === 0 ? "—" : `${adj > 0 ? "+" : "−"}${fmtMoney(Math.abs(adj), currency)}`}
+                        </span>
+                        <button className="debt-adj__btn" aria-label={`Increase ${r.label} payment`} onClick={() => adjustMonth(r.adjKey, 50)}>+</button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
               </div>
               {scheduleTruncated && (
                 <button className="btn btn--ghost mt-10"
@@ -234,7 +304,7 @@ export function DebtScreen() {
       )}
 
       {items.length > 0 && (
-        <button className="fab" aria-label="Add debt" onClick={() => { setEdit(null); setOpen(true); }}>
+        <button className="fab" data-tour="debt-fab" aria-label="Add debt" onClick={() => { setEdit(null); setOpen(true); }}>
           <IconPlus />
         </button>
       )}
@@ -247,7 +317,98 @@ export function DebtScreen() {
         onSave={(patch) => { edit ? update(edit.id, patch) : add(patch); setOpen(false); }}
         onDelete={edit ? () => { remove(edit.id); setOpen(false); } : undefined}
       />
+
+      <DebtDetailSheet
+        debt={detail}
+        result={result}
+        currency={currency}
+        onClose={() => setDetail(null)}
+        onEdit={(d) => { setDetail(null); setEdit(d); setOpen(true); }}
+      />
     </>
+  );
+}
+
+function DebtDetailSheet({
+  debt, result, currency, onClose, onEdit,
+}: {
+  debt: Debt | null;
+  result: PayoffResult;
+  currency: string;
+  onClose: () => void;
+  onEdit: (d: Debt) => void;
+}) {
+  const paidPct = debt && debt.startBalance ? pct(debt.startBalance - debt.currentBalance, debt.startBalance) : 0;
+  const payoffMonth = debt ? result.payoffMonthByDebt[debt.id] : undefined;
+  const rows = debt ? result.scheduleByDebt[debt.id] ?? [] : [];
+  const payoffLabel = rows.length > 0 ? rows[rows.length - 1].label : "—";
+
+  return (
+    <BottomSheet open={!!debt} title={debt?.name ?? "Debt"} onClose={onClose}>
+      {debt && (
+        <>
+          <div className="spread spread--top mb-4">
+            <div>
+              <div className="muted eyebrow-12">PAYOFF DATE</div>
+              <div className="big-number" style={{ fontSize: 26 }}>{payoffLabel}</div>
+              <div className="muted fs-13">
+                {payoffMonth ? `${payoffMonth} months from start` : "Raise your payment to finish"}
+              </div>
+            </div>
+            <ProgressRing
+              value={paidPct / 100}
+              size={72}
+              stroke={7}
+              ariaLabel={`${paidPct}% paid off`}
+              center={<span className="txt-strong-800">{paidPct}%</span>}
+            />
+          </div>
+
+          <div className="ov-grid mb-4">
+            <div>
+              <div className="ov-cell__label">Current balance</div>
+              <div className="ov-cell__value">{fmtMoney(debt.currentBalance, currency)}</div>
+            </div>
+            <div>
+              <div className="ov-cell__label">Start balance</div>
+              <div className="ov-cell__value">{fmtMoney(debt.startBalance, currency)}</div>
+            </div>
+            <div>
+              <div className="ov-cell__label">Min payment</div>
+              <div className="ov-cell__value">{fmtMoney(debt.minPayment, currency)}</div>
+            </div>
+            <div>
+              <div className="ov-cell__label">Interest rate</div>
+              <div className="ov-cell__value">{debt.apr}% APR</div>
+            </div>
+          </div>
+
+          {rows.length > 0 && (
+            <>
+              <div className="section-title section-title--compact">Payment schedule</div>
+              <div className="col-stack debt-detail-schedule">
+                <div className="spread muted debt-schedule__head">
+                  <span className="debt-col-month">MONTH</span>
+                  <span className="debt-col-amt">PAYMENT</span>
+                  <span className="debt-col-amt">INTEREST</span>
+                  <span className="debt-col-bal">BALANCE</span>
+                </div>
+                {rows.map((r) => (
+                  <div key={r.month} className="spread debt-schedule__row">
+                    <span className="debt-col-month">{r.label}</span>
+                    <span className="debt-col-amt">{fmtMoney(r.payment, currency)}</span>
+                    <span className="debt-col-amt neg">{fmtMoney(r.interest, currency)}</span>
+                    <span className="debt-col-bal txt-strong">{fmtMoney(r.balance, currency)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <button className="btn btn--primary mt-10" onClick={() => onEdit(debt)}>Edit debt</button>
+        </>
+      )}
+    </BottomSheet>
   );
 }
 

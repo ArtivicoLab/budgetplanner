@@ -1,6 +1,6 @@
 // Desktop sidebar (shown ≥900px). Groups destinations into Overview / Money.
 import { navigate, type Route } from "../router";
-import { NAV, SETTINGS_ITEM, ROUTE_LABELS } from "../nav";
+import { NAV, SETTINGS_ITEM } from "../nav";
 import { IconCompass, IconHeart } from "./icons";
 import { useSync } from "../stores/useSync";
 import { useSettings } from "../stores/useSettings";
@@ -36,7 +36,7 @@ export function Sidebar({ active, onCoachTour }: { active: Route; onCoachTour: (
         <span className="sidebar__ico" style={{ background: "var(--surface-2)" }}>
           <IconCompass size={16} />
         </span>
-        Coach Tour: {ROUTE_LABELS[active]}
+        Coach tour
       </button>
       <div className="sidebar__scroll">
         {groups.map((group) => (

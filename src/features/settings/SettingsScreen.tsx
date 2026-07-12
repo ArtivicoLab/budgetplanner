@@ -13,15 +13,17 @@ import { navigate } from "../../router";
 import { ALL_NAV_ITEMS, HIDEABLE_NAV_ITEMS } from "../../nav";
 import { APP_VERSION, BUILD_SHA } from "../../lib/config";
 import { categoryColor, PICKABLE_CATEGORY_COLORS } from "../../lib/ui";
+import { FAMILY_SHARED, isBuiltInMember } from "../../lib/household";
 
 export function SettingsScreen() {
   const {
     name, theme, weekStart, currency, digestTime, hiddenRoutes, categories,
-    categoryColors, tabBarRoutes, activated, accessCode, update,
+    categoryColors, tabBarRoutes, householdMembers, activated, accessCode, update,
   } = useSettings();
   const { connected, spreadsheetId, hasClientId, busy, error, connect, relink, disconnect, syncNow } =
     useSync();
   const [newCategory, setNewCategory] = useState("");
+  const [newMember, setNewMember] = useState("");
   const [colorPickerFor, setColorPickerFor] = useState<string | null>(null);
   const [yearResetOpen, setYearResetOpen] = useState(false);
   const [codeInput, setCodeInput] = useState("");
@@ -95,6 +97,23 @@ export function SettingsScreen() {
 
   function setCategoryColor(name: string, color: string) {
     update({ categoryColors: { ...categoryColors, [name]: color } });
+  }
+
+  function addMember() {
+    const m = newMember.trim();
+    if (!m || isBuiltInMember(m) || householdMembers.some((x) => x.toLowerCase() === m.toLowerCase())) return;
+    update({ householdMembers: [...householdMembers, m] });
+    setNewMember("");
+  }
+
+  function removeMember(m: string) {
+    update({ householdMembers: householdMembers.filter((x) => x !== m) });
+  }
+
+  function renameMember(oldName: string, next: string) {
+    const n = next.trim();
+    if (!n || n === oldName || isBuiltInMember(n) || householdMembers.some((x) => x.toLowerCase() === n.toLowerCase())) return;
+    update({ householdMembers: householdMembers.map((x) => (x === oldName ? n : x)) });
   }
 
   function runYearReset() {
@@ -246,6 +265,23 @@ export function SettingsScreen() {
         )}
       </div>
 
+      <div className="section-title">
+        Help &amp; guide
+        <HelpTip text="How to learn the app: replay the welcome tour, or tap the compass on any screen for a quick guide to just that screen." />
+      </div>
+      <div className="card">
+        <p className="muted fs-13" style={{ marginTop: 0 }}>New here? A few ways to find your feet:</p>
+        <ul className="help-list">
+          <li>Tap the <strong>compass</strong> at the top of any screen to replay that screen's quick guide.</li>
+          <li>Add your income, bills, and subscriptions in <strong>Budget</strong> or <strong>Recurring</strong>. Log what you spend in <strong>Transactions</strong>.</li>
+          <li>Connect your <strong>Google Sheet</strong> above so your data has a real backup that's yours.</li>
+          <li>Everything else (Calendar, Net Worth, 50/30/20, Distribution) fills in automatically from those.</li>
+        </ul>
+        <button className="btn btn--ghost" onClick={() => window.dispatchEvent(new Event("coach:welcome"))}>
+          Replay the welcome tour
+        </button>
+      </div>
+
       <div className="section-title">Appearance</div>
       <div className="card">
         <label className="field__label">Theme</label>
@@ -345,6 +381,47 @@ export function SettingsScreen() {
             onKeyDown={(e) => e.key === "Enter" && addCategory()}
           />
           <button className="btn btn--auto" onClick={addCategory} disabled={!newCategory.trim()}>
+            Add
+          </button>
+        </div>
+      </div>
+
+      <div className="section-title">
+        Household
+        <HelpTip text="Add the people who share this budget. Their names become one-tap choices when you tag who earned or spent, and power the Distribution view. 'Family Shared' is always available." />
+      </div>
+      <div className="card">
+        <p className="muted settings-hint">
+          Names only, no logins. Tag a transaction with a person to see each one's share in Distribution.
+        </p>
+        <div className="settings-member-row">
+          <span className="settings-member-name">{FAMILY_SHARED}</span>
+          <span className="muted fs-12">Built-in</span>
+        </div>
+        {householdMembers.map((m) => (
+          <div key={m} className="settings-member-row">
+            <input
+              className="input input--shrink"
+              defaultValue={m}
+              aria-label={`Rename ${m}`}
+              onBlur={(e) => renameMember(m, e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            />
+            <button className="muted" aria-label={`Remove ${m}`} onClick={() => removeMember(m)}>
+              <IconClose size={16} />
+            </button>
+          </div>
+        ))}
+        <div className="spread spread--gap8">
+          <input
+            className="input input--shrink"
+            value={newMember}
+            placeholder="Add a person (e.g. Partner)"
+            aria-label="Add a household member"
+            onChange={(e) => setNewMember(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addMember()}
+          />
+          <button className="btn btn--auto" onClick={addMember} disabled={!newMember.trim()}>
             Add
           </button>
         </div>

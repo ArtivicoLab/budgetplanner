@@ -1,8 +1,10 @@
 import { create } from "zustand";
 import * as db from "../lib/db";
 import { newId, nowIso } from "../lib/id";
-import { carryOver, summarize } from "../lib/budget";
+import { carryOver, summarize, computePeriodRange } from "../lib/budget";
+import { addMonthsISO } from "../lib/dates";
 import { cancelReminder, syncBillReminder } from "../lib/reminders";
+import { recordTombstone } from "../lib/tombstones";
 import { useSync } from "./useSync";
 import { useFunds } from "./v2";
 import type { BudgetPeriod, MoneyRow } from "../lib/types";
@@ -27,6 +29,10 @@ interface BudgetState {
     patch: Partial<BudgetPeriod>,
     opts?: { carryFrom?: string; carryBalance?: boolean }
   ) => BudgetPeriod;
+  /** One-tap "reuse year after year": create `count` consecutive monthly periods
+      starting at `startDate`, each copying the previous period's line structure
+      (actuals zeroed) and carrying its leftover balance forward. */
+  rolloverYear: (fromPeriodId: string, startDate: string, count?: number) => BudgetPeriod[];
   updatePeriod: (id: string, patch: Partial<BudgetPeriod>) => void;
 
   rowsFor: (periodId: string) => MoneyRow[];
@@ -55,11 +61,17 @@ export const useBudget = create<BudgetState>((set, get) => ({
   money: [],
   currentPeriodId: "",
   setAll: (periods, money) =>
-    set({
+    set((s) => ({
       periods,
       money,
-      currentPeriodId: get().currentPeriodId || periods[0]?.id || "",
-    }),
+      // Keep the selection only if it still points at a real period in this
+      // freshly-loaded set — otherwise a stale id (e.g. left over from demo
+      // data after switching to "My data") would orphan new rows against a
+      // period that no longer exists.
+      currentPeriodId: periods.some((p) => p.id === s.currentPeriodId)
+        ? s.currentPeriodId
+        : periods[0]?.id || "",
+    })),
   setCurrent: (currentPeriodId) => set({ currentPeriodId }),
 
   addPeriod: (patch, opts) => {
@@ -97,6 +109,25 @@ export const useBudget = create<BudgetState>((set, get) => ({
     return p;
   },
 
+  rolloverYear: (fromPeriodId, startDate, count = 12) => {
+    const created: BudgetPeriod[] = [];
+    let carryFrom = fromPeriodId;
+    let monthStart = startDate;
+    for (let i = 0; i < count; i++) {
+      const range = computePeriodRange("monthly", monthStart);
+      const p = get().addPeriod(
+        { label: range.label, cadence: "monthly", startDate: range.startDate, endDate: range.endDate },
+        { carryFrom, carryBalance: true }
+      );
+      created.push(p);
+      carryFrom = p.id;
+      monthStart = addMonthsISO(range.startDate, 1);
+    }
+    // Land on the first month of the new year, not the last.
+    if (created[0]) set({ currentPeriodId: created[0].id });
+    return created;
+  },
+
   updatePeriod: (id, patch) => {
     let updated: BudgetPeriod | undefined;
     set((s) => ({
@@ -129,6 +160,7 @@ export const useBudget = create<BudgetState>((set, get) => ({
       createdAt: ts,
       updatedAt: ts,
       fundId: "",
+      bucket: "",
       ...patch,
     };
     set((s) => ({ money: [...s.money, m] }));
@@ -187,7 +219,9 @@ export const useBudget = create<BudgetState>((set, get) => ({
     const existing = get().money.find((m) => m.id === id);
     set((s) => ({ money: s.money.filter((m) => m.id !== id) }));
     void db.remove("money", id);
-    touch();
+    recordTombstone("money", id);
+    useSync.getState().touch("money");
+    useSync.getState().touch("tombstones");
     if (existing?.calendarEventId) void cancelReminder(existing.calendarEventId);
   },
 }));

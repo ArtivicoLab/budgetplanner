@@ -4,26 +4,35 @@ import * as db from "../lib/db";
 import { buildSample, type Seed } from "../lib/sample";
 import { isValidAccessCode } from "../lib/access";
 import { isDemo, setDemoFlag } from "../lib/demo";
+import { loadTombstones } from "../lib/tombstones";
 import { useBudget } from "./useBudget";
 import { useSettings } from "./useSettings";
 import { useSync } from "./useSync";
-import { useFunds, useDebts } from "./v2";
-import type { BudgetPeriod, Debt, Fund, MoneyRow } from "../lib/types";
+import { useFunds, useDebts, useTransactions, useAccounts, useNetWorth, useRecurring } from "./v2";
+import type { Account, BudgetPeriod, Debt, Fund, MoneyRow, NetWorthItem, Recurring, Transaction } from "../lib/types";
 
 const SEEDED_KEY = "seeded"; // legacy flag: the OLD build wrote it when it seeded IndexedDB
 
 async function loadStores() {
-  const [periods, money, funds, debts] = await Promise.all([
+  const [periods, money, funds, debts, transactions, accounts, networth, recurring] = await Promise.all([
     db.all<BudgetPeriod>("periods"),
     db.all<MoneyRow>("money"),
     db.all<Fund>("funds"),
     db.all<Debt>("debts"),
+    db.all<Transaction>("transactions"),
+    db.all<Account>("accounts"),
+    db.all<NetWorthItem>("networth"),
+    db.all<Recurring>("recurring"),
   ]);
   // Backfill periods saved before `cadence` existed — IndexedDB has no schema,
   // so old rows would otherwise push a blank cadence cell to the Sheet on sync.
   useBudget.getState().setAll(periods.map((p) => ({ ...p, cadence: p.cadence || "monthly" })), money);
   useFunds.getState().setAll(funds);
   useDebts.getState().setAll(debts);
+  useTransactions.getState().setAll(transactions);
+  useAccounts.getState().setAll(accounts);
+  useNetWorth.getState().setAll(networth);
+  useRecurring.getState().setAll(recurring);
 }
 
 // Load the full-year sample straight into the in-memory stores. Nothing is
@@ -34,6 +43,10 @@ function loadSampleIntoStores(s: Seed = buildSample()) {
   useBudget.getState().setAll(s.periods.map((p) => ({ ...p, cadence: p.cadence || "monthly" })), s.money);
   useFunds.getState().setAll(s.funds);
   useDebts.getState().setAll(s.debts);
+  useTransactions.getState().setAll(s.transactions);
+  useAccounts.getState().setAll(s.accounts);
+  useNetWorth.getState().setAll(s.networth);
+  useRecurring.getState().setAll(s.recurring);
 }
 
 // One-time migration off the OLD model, which seeded the sample straight into
@@ -64,6 +77,7 @@ export function bootstrap(): Promise<void> {
 
 async function runBootstrap() {
   await useSettings.getState().load();
+  await loadTombstones();
   await migrateLegacySeed();
   const demo = isDemo();
   db.setDbDemoMode(demo);
@@ -118,6 +132,10 @@ export async function resetEverything() {
   useBudget.setState({ currentPeriodId: "" });
   useFunds.getState().setAll([]);
   useDebts.getState().setAll([]);
+  useTransactions.getState().setAll([]);
+  useAccounts.getState().setAll([]);
+  useNetWorth.getState().setAll([]);
+  useRecurring.getState().setAll([]);
 }
 
 export interface YearResetOptions {
@@ -139,4 +157,4 @@ export async function resetForNewYear(opts: YearResetOptions): Promise<void> {
   useSync.getState().touch();
 }
 
-export { loadStores };
+export { loadStores, loadSampleIntoStores };

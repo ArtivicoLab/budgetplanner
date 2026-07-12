@@ -9,14 +9,24 @@ import {
   SPREADSHEET_TITLE,
   TAB,
   V2_TABS,
+  accountToRow,
   debtToRow,
   fundToRow,
   moneyToRow,
+  netWorthToRow,
   periodToRow,
+  recurringToRow,
+  tombstoneToRow,
+  txnToRow,
+  rowToAccount,
   rowToDebt,
   rowToFund,
   rowToMoney,
+  rowToNetWorth,
   rowToPeriod,
+  rowToRecurring,
+  rowToTombstone,
+  rowToTxn,
 } from "./schema";
 import {
   batchGet,
@@ -28,10 +38,15 @@ import {
 import { forgetToken, requestToken, SCOPE_SHEETS } from "./google/auth";
 import { isValidAccessCode } from "./access";
 import { isDemo } from "./demo";
+import { DirtyTabs } from "./syncDirty";
+import { mergeById } from "./merge";
+import {
+  getTombstones, setTombstones, mergeTombstones, applyTombstones, pruneTombstones, tombstoneCutoff,
+} from "./tombstones";
 import { useSettings } from "../stores/useSettings";
 import { useBudget } from "../stores/useBudget";
-import { useFunds, useDebts } from "../stores/v2";
-import type { BudgetPeriod, Debt, Fund, MoneyRow } from "./types";
+import { useFunds, useDebts, useTransactions, useAccounts, useNetWorth, useRecurring } from "../stores/v2";
+import type { Account, BudgetPeriod, Debt, Fund, MoneyRow, NetWorthItem, Recurring, Transaction } from "./types";
 
 const LS_ID = "ub.spreadsheetId";
 
@@ -52,8 +67,33 @@ function setSpreadsheetId(id: string) {
   localStorage.setItem(LS_ID, id);
 }
 
-const SYNC_TABS = [TAB.BudgetPeriods, TAB.Money, TAB.Funds, TAB.Debts];
-const ALL_TABS = [...SYNC_TABS, ...V2_TABS];
+const SYNC_TABS = [TAB.BudgetPeriods, TAB.Money, TAB.Funds, TAB.Debts, TAB.Transactions, TAB.Accounts, TAB.NetWorth, TAB.Recurring];
+// Tombstones ride along in push/pull but aren't a "store" — handled specially.
+const PUSH_TABS = [...SYNC_TABS, TAB.Tombstones];
+const ALL_TABS = [...PUSH_TABS, ...V2_TABS];
+
+// Per-collection dirty tracking (#22): a mutation marks only its own tab, so a
+// debounced flush rewrites just what changed instead of all 8 tabs every time.
+const COLLECTION_TO_TAB: Record<string, string> = {
+  periods: TAB.BudgetPeriods,
+  money: TAB.Money,
+  funds: TAB.Funds,
+  debts: TAB.Debts,
+  transactions: TAB.Transactions,
+  accounts: TAB.Accounts,
+  networth: TAB.NetWorth,
+  recurring: TAB.Recurring,
+  tombstones: TAB.Tombstones,
+};
+const dirty = new DirtyTabs();
+
+/** Flag a collection's tab dirty. An unknown/absent name marks everything —
+    so any untagged mutation path still pushes fully (never silently skipped). */
+export function markDirty(collection?: string): void {
+  const tab = collection ? COLLECTION_TO_TAB[collection] : undefined;
+  if (tab) dirty.markTab(tab);
+  else dirty.markAll(PUSH_TABS);
+}
 
 // ---- push: build a full tab (header + current rows) from the live stores ----
 function tabValues(tab: string): string[][] {
@@ -64,20 +104,30 @@ function tabValues(tab: string): string[][] {
     case TAB.Money: rows = useBudget.getState().money.map(moneyToRow); break;
     case TAB.Funds: rows = useFunds.getState().items.map(fundToRow); break;
     case TAB.Debts: rows = useDebts.getState().items.map(debtToRow); break;
+    case TAB.Transactions: rows = useTransactions.getState().items.map(txnToRow); break;
+    case TAB.Accounts: rows = useAccounts.getState().items.map(accountToRow); break;
+    case TAB.NetWorth: rows = useNetWorth.getState().items.map(netWorthToRow); break;
+    case TAB.Recurring: rows = useRecurring.getState().items.map(recurringToRow); break;
+    case TAB.Tombstones: rows = getTombstones().map(tombstoneToRow); break;
   }
   return [header, ...rows];
 }
 
-export async function pushAll(): Promise<void> {
+export async function pushAll(force = false): Promise<void> {
   // Hard stop: never write the in-memory sample to a real Sheet. Demo mode
   // should always be off by the time anyone is connected (connect() clears it),
   // but this guarantees the sample can never leak upward even if it isn't.
   if (isDemo()) return;
   const id = getSpreadsheetId();
   if (!id) return;
-  // Sequential to stay well under rate limits for personal data volumes.
-  for (const tab of SYNC_TABS) {
+  // Only the tabs that actually changed (all when forced or nothing tracked).
+  // Sequential to stay well under rate limits for personal data volumes. A tab
+  // is cleared from `dirty` only after its write succeeds, so a mid-flush
+  // failure just retries it next time.
+  const tabs = dirty.toPush(PUSH_TABS, force);
+  for (const tab of tabs) {
     await writeTab(id, tab, tabValues(tab));
+    dirty.clear(tab);
   }
 }
 
@@ -93,23 +143,58 @@ function parseRows<T>(rows: string[][], fromRow: (r: string[]) => T): T[] {
 export async function pull(): Promise<void> {
   const id = getSpreadsheetId();
   if (!id) return;
-  const data = await batchGet(id, SYNC_TABS);
+  const data = await batchGet(id, PUSH_TABS);
 
-  const periods = parseRows<BudgetPeriod>(data[TAB.BudgetPeriods] ?? [], rowToPeriod);
-  const money = parseRows<MoneyRow>(data[TAB.Money] ?? [], rowToMoney);
-  const funds = parseRows<Fund>(data[TAB.Funds] ?? [], rowToFund);
-  const debts = parseRows<Debt>(data[TAB.Debts] ?? [], rowToDebt);
+  // Delete markers first: union local + remote tombstones (newest per id),
+  // prune expired ones, and persist. Rows are then filtered against the full
+  // set so a deletion made on any device sticks after the merge below.
+  const remoteTombs = parseRows(data[TAB.Tombstones] ?? [], rowToTombstone);
+  const tombMerge = mergeTombstones(getTombstones(), remoteTombs);
+  const tombstones = pruneTombstones(tombMerge.merged, tombstoneCutoff());
+  setTombstones(tombstones);
+  if (tombMerge.localContributed) markDirty("tombstones");
+
+  // Row-granular merge (not blind replace): keep whichever copy of each row is
+  // newer by `updatedAt`, so pulling the sheet on a second device doesn't clobber
+  // that device's un-pushed edits, then drop anything a tombstone deleted. When a
+  // local row survives, mark its tab dirty so the next flush converges the sheet.
+  const merge = <T extends { id: string; updatedAt: string }>(
+    collection: string,
+    remoteRows: T[],
+    localRows: T[]
+  ): T[] => {
+    const { merged, localContributed } = mergeById(localRows, remoteRows);
+    if (localContributed) markDirty(collection);
+    return applyTombstones(merged, tombstones);
+  };
+
+  const periods = merge("periods", parseRows<BudgetPeriod>(data[TAB.BudgetPeriods] ?? [], rowToPeriod), useBudget.getState().periods);
+  const money = merge("money", parseRows<MoneyRow>(data[TAB.Money] ?? [], rowToMoney), useBudget.getState().money);
+  const funds = merge("funds", parseRows<Fund>(data[TAB.Funds] ?? [], rowToFund), useFunds.getState().items);
+  const debts = merge("debts", parseRows<Debt>(data[TAB.Debts] ?? [], rowToDebt), useDebts.getState().items);
+  const transactions = merge("transactions", parseRows<Transaction>(data[TAB.Transactions] ?? [], rowToTxn), useTransactions.getState().items);
+  const accounts = merge("accounts", parseRows<Account>(data[TAB.Accounts] ?? [], rowToAccount), useAccounts.getState().items);
+  const networth = merge("networth", parseRows<NetWorthItem>(data[TAB.NetWorth] ?? [], rowToNetWorth), useNetWorth.getState().items);
+  const recurring = merge("recurring", parseRows<Recurring>(data[TAB.Recurring] ?? [], rowToRecurring), useRecurring.getState().items);
 
   await Promise.all([
     replaceStore("periods", periods),
     replaceStore("money", money),
     replaceStore("funds", funds),
     replaceStore("debts", debts),
+    replaceStore("transactions", transactions),
+    replaceStore("accounts", accounts),
+    replaceStore("networth", networth),
+    replaceStore("recurring", recurring),
   ]);
 
   useBudget.getState().setAll(periods, money);
   useFunds.getState().setAll(funds);
   useDebts.getState().setAll(debts);
+  useTransactions.getState().setAll(transactions);
+  useAccounts.getState().setAll(accounts);
+  useNetWorth.getState().setAll(networth);
+  useRecurring.getState().setAll(recurring);
 }
 
 async function replaceStore<T extends { id: string }>(
@@ -195,7 +280,7 @@ export async function connect(): Promise<string> {
   }
   const id = await createSpreadsheet(SPREADSHEET_TITLE, ALL_TABS);
   setSpreadsheetId(id);
-  await pushAll(); // seed the new sheet with whatever is on-device now
+  await pushAll(true); // seed the new sheet fully (all tabs + headers)
   await syncAccessCode(id);
   return id;
 }

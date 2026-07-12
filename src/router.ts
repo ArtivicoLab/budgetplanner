@@ -4,6 +4,13 @@ import { useEffect, useState } from "react";
 export type Route =
   | "dashboard"
   | "annual"
+  | "calendar"
+  | "fiftythirty"
+  | "recurring"
+  | "transactions"
+  | "accounts"
+  | "networth"
+  | "distribution"
   | "budget"
   | "savings"
   | "debt"
@@ -14,6 +21,13 @@ export type Route =
 const ROUTES: Route[] = [
   "dashboard",
   "annual",
+  "calendar",
+  "fiftythirty",
+  "recurring",
+  "transactions",
+  "accounts",
+  "networth",
+  "distribution",
   "budget",
   "savings",
   "debt",

@@ -65,6 +65,8 @@ export function DashboardScreen() {
     () => simulatePayoff(debts, debtStrategy, monthlyExtra),
     [debts, debtStrategy, monthlyExtra]
   );
+  const debtPaidOff = payoff.totalStart - payoff.totalCurrent;
+  const debtPaidPct = payoff.totalStart > 0 ? Math.round((debtPaidOff / payoff.totalStart) * 100) : 0;
   const payoffColumns = debts
     .filter((d) => payoff.payoffMonthByDebt[d.id] !== undefined)
     .map((d) => ({ label: d.name.split(" ")[0], value: payoff.payoffMonthByDebt[d.id] }))
@@ -333,10 +335,17 @@ export function DashboardScreen() {
                 <div className="muted fs-13">debt-free</div>
               </div>
             </div>
+            <div className="spread row-label-13">
+              <span className="muted">Paid off</span>
+              <span className="txt-strong tile__value--success">{fmtMoney(debtPaidOff, currency)} · {debtPaidPct}%</span>
+            </div>
+            <div className="pbar mt-1 mb-3">
+              <div className="pbar__fill" style={{ width: `${debtPaidPct}%`, background: "var(--success)" }} />
+            </div>
             {payoffColumns.length > 0 && (
               <div className="mt-4">
                 <div className="muted eyebrow-12 mb-3">MONTHS TO PAY OFF EACH</div>
-                <Columns points={payoffColumns} height={90} color="var(--accent)" />
+                <Columns points={payoffColumns} height={90} color="var(--accent)" formatValue={(n) => `${Math.round(n)} mo`} />
               </div>
             )}
           </>

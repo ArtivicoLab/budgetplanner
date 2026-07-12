@@ -1,18 +1,23 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BottomSheet } from "../../components/BottomSheet";
+import { SetupWizard } from "../../components/SetupWizard";
 import { Chip, ChipRow } from "../../components/Chip";
 import { Segmented } from "../../components/Segmented";
 import { EmptyState } from "../../components/EmptyState";
 import { CountUp } from "../../components/CountUp";
-import { StatusBar, Donut, GroupedBars } from "../../components/Charts";
+import { StatusBar, Donut, GroupedBars, AreaChart } from "../../components/Charts";
+import { ProgressRing } from "../../components/ProgressRing";
 import { HelpTip } from "../../components/HelpTip";
 import { IconBudget, IconClose, IconPlus } from "../../components/icons";
 import { useBudget } from "../../stores/useBudget";
-import { useFunds } from "../../stores/v2";
+import { useFunds, useTransactions } from "../../stores/v2";
 import { useSettings } from "../../stores/useSettings";
 import { rowDiff, summarize, computePeriodRange } from "../../lib/budget";
-import { money as fmtMoney } from "../../lib/ui";
-import { dueLabel, fromISO, format, todayISO } from "../../lib/dates";
+import { dailyBalance } from "../../lib/dailyBalance";
+import { effectiveBucket } from "../../lib/framework";
+import { isDemo } from "../../lib/demo";
+import { money as fmtMoney, categoryColor } from "../../lib/ui";
+import { dueLabel, fromISO, format, todayISO, addMonthsISO } from "../../lib/dates";
 import type { BudgetCadence, BudgetPeriod, MoneyKind, MoneyRow } from "../../lib/types";
 
 const KINDS: { value: MoneyKind; label: string }[] = [
@@ -31,6 +36,7 @@ const NAME_PRESETS: Partial<Record<MoneyKind, string[]>> = {
 
 const CADENCES: { value: BudgetCadence; label: string }[] = [
   { value: "monthly", label: "Monthly" },
+  { value: "semimonthly", label: "Semi-monthly" },
   { value: "biweekly", label: "Biweekly" },
   { value: "weekly", label: "Weekly" },
   { value: "paycheck", label: "Paycheck" },
@@ -44,6 +50,15 @@ const BREAKDOWN_COLORS: Record<string, string> = {
   Savings: "var(--cat-butter)",
 };
 
+// 50/30/20 per-line allocation (#15): a tappable chip that cycles the bucket.
+const BUCKET_ORDER = ["needs", "wants", "savings"] as const;
+const BUCKET_FILL: Record<string, string> = { needs: "var(--cat-sky)", wants: "var(--cat-pink)", savings: "var(--cat-teal)" };
+const BUCKET_NAME: Record<string, string> = { needs: "Needs", wants: "Wants", savings: "Savings" };
+function nextBucket(b: string): string {
+  const i = BUCKET_ORDER.indexOf(b as (typeof BUCKET_ORDER)[number]);
+  return BUCKET_ORDER[(i + 1) % BUCKET_ORDER.length];
+}
+
 export function BudgetScreen() {
   const {
     periods,
@@ -55,13 +70,26 @@ export function BudgetScreen() {
     deleteMoney,
     addPeriod,
     updatePeriod,
+    rolloverYear,
   } = useBudget();
-  const { currency } = useSettings();
+  const { currency, checklistItems, checklistDone, update: updateSettings } = useSettings();
   const { items: funds } = useFunds();
+  const { items: txns } = useTransactions();
 
   const [addOpen, setAddOpen] = useState(false);
   const [addKind, setAddKind] = useState<MoneyKind>("expense");
   const [periodOpen, setPeriodOpen] = useState(false);
+  const [newTodo, setNewTodo] = useState("");
+  const [wizardOpen, setWizardOpen] = useState(false);
+
+  // Offer the Easy Setup wizard once to a real (non-demo) user with no budget yet.
+  useEffect(() => {
+    if (!isDemo() && periods.length === 0 && !localStorage.getItem("wizardSeen")) {
+      localStorage.setItem("wizardSeen", "1");
+      setWizardOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const period = periods.find((p) => p.id === currentPeriodId) ?? periods[0];
   const rows = period ? rowsFor(period.id) : [];
@@ -70,17 +98,59 @@ export function BudgetScreen() {
     [period, rows]
   );
 
+  // "Where does my money go" — actual spending split by line item (top 6 + Other),
+  // not just by kind like the Actual breakdown donut above it.
+  const whereMoney = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      if (r.kind === "income") continue;
+      const v = r.actual || 0;
+      if (v <= 0) continue;
+      const key = (r.name || r.category || "Other").trim() || "Other";
+      map.set(key, (map.get(key) ?? 0) + v);
+    }
+    const sorted = [...map.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+    const top = sorted.slice(0, 6);
+    const rest = sorted.slice(6).reduce((a, s) => a + s.value, 0);
+    if (rest > 0) top.push({ label: "Other", value: rest });
+    return top;
+  }, [rows]);
+
+  // Daily running balance for the period, from dated transactions (#11).
+  const daily = useMemo(
+    () => (period ? dailyBalance(txns, period.startDate, period.endDate, period.startBalance) : null),
+    [txns, period]
+  );
+
+  // Monthly money to-do (#12): items are shared, done-state is per period.
+  const doneSet = new Set(period ? checklistDone[period.id] ?? [] : []);
+  function toggleTodo(label: string) {
+    if (!period) return;
+    const cur = checklistDone[period.id] ?? [];
+    const next = cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label];
+    updateSettings({ checklistDone: { ...checklistDone, [period.id]: next } });
+  }
+  function addTodo() {
+    const t = newTodo.trim();
+    if (!t || checklistItems.includes(t)) return;
+    updateSettings({ checklistItems: [...checklistItems, t] });
+    setNewTodo("");
+  }
+  function removeTodo(label: string) {
+    updateSettings({ checklistItems: checklistItems.filter((l) => l !== label) });
+  }
+
   if (!period || !sum) {
     return (
       <>
         <Head />
         <div className="card">
-          <EmptyState icon={<IconBudget size={28} />} title="No budget period yet" sub="Create one to start tracking.">
-            <button className="btn btn--primary" onClick={() => createPeriod(addPeriod, "monthly")}>
-              Create this month
-            </button>
+          <EmptyState icon={<IconBudget size={28} />} title="Let's set up your budget" sub="A quick 4-step setup, or start from scratch.">
+            <button className="btn btn--primary" onClick={() => setWizardOpen(true)}>Quick setup</button>
+            <button className="btn btn--ghost mt-10" onClick={() => createPeriod(addPeriod, "monthly")}>Just create this month</button>
           </EmptyState>
         </div>
+        <SetupWizard open={wizardOpen} onClose={() => setWizardOpen(false)} />
       </>
     );
   }
@@ -132,6 +202,30 @@ export function BudgetScreen() {
         </div>
       </div>
 
+      {/* Paycheck-style headline strip (#16) */}
+      {(() => {
+        const available = sum.startBalance + sum.income;
+        const leftPct = available > 0 ? Math.max(0, Math.min(1, sum.leftToSpend / available)) : 0;
+        return (
+          <div className="card budget-strip-card" data-tour="budget-strip">
+            <ProgressRing
+              value={leftPct}
+              size={74}
+              stroke={8}
+              ariaLabel={`${Math.round(leftPct * 100)}% of income left to spend`}
+              center={<span className="txt-strong-800">{Math.round(leftPct * 100)}%</span>}
+            />
+            <div className="annual-strip budget-strip">
+              <div className="annual-strip__item"><span className="muted annual-strip__label">Left to spend</span><span className={`annual-strip__val${sum.overspent ? " neg" : ""}`}>{fmtMoney(sum.leftToSpend, currency)}</span></div>
+              <div className="annual-strip__item"><span className="muted annual-strip__label">Total income</span><span className="annual-strip__val tile__value--success">{fmtMoney(sum.income, currency)}</span></div>
+              <div className="annual-strip__item"><span className="muted annual-strip__label">Total spending</span><span className="annual-strip__val">{fmtMoney(sum.bills + sum.expenses, currency)}</span></div>
+              <div className="annual-strip__item"><span className="muted annual-strip__label">Total saved</span><span className="annual-strip__val tile__value--success">{fmtMoney(sum.savings, currency)}</span></div>
+              <div className="annual-strip__item"><span className="muted annual-strip__label">Total debt paid</span><span className="annual-strip__val">{fmtMoney(sum.debt, currency)}</span></div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Left to spend */}
       <div className="card" data-tour="budget-leftspend" style={{ marginTop: 12 }}>
         <div className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
@@ -152,7 +246,7 @@ export function BudgetScreen() {
       </div>
 
       {/* Left to budget */}
-      <div className="card">
+      <div className="card" data-tour="budget-tobudget">
         <div className="muted" style={{ fontSize: 12, fontWeight: 700 }}>
           LEFT TO BUDGET
           <HelpTip text="Income you've planned to receive, minus what you've already assigned to bills, expenses, debt and savings. Based on planned amounts, not what actually happened." />
@@ -170,6 +264,37 @@ export function BudgetScreen() {
         </div>
       </div>
 
+      {/* Monthly money to-do (#12) */}
+      <div data-tour="budget-todo">
+      <div className="section-title">
+        To-do this month
+        <HelpTip text="A gentle monthly money checklist. Tick things off as you go — it resets each period. Add or remove items to fit your routine." />
+      </div>
+      <div className="card">
+        <div className="spread checklist-head">
+          <span className="txt-strong">{doneSet.size}/{checklistItems.length} done</span>
+          <div className="pbar checklist-pbar">
+            <div className="pbar__fill" style={{ width: `${checklistItems.length ? Math.round((doneSet.size / checklistItems.length) * 100) : 0}%`, background: "var(--success)" }} />
+          </div>
+        </div>
+        {checklistItems.map((label) => (
+          <div className="row checklist-row" key={label}>
+            <input type="checkbox" checked={doneSet.has(label)} onChange={() => toggleTodo(label)} aria-label={label}
+              style={{ width: 20, height: 20, accentColor: "var(--success)" }} />
+            <span className={`checklist-label${doneSet.has(label) ? " checklist-label--done" : ""}`}>{label}</span>
+            <button className="muted checklist-remove" onClick={() => removeTodo(label)} aria-label={`Remove ${label}`}>
+              <IconClose size={14} />
+            </button>
+          </div>
+        ))}
+        <div className="checklist-add">
+          <input className="input" value={newTodo} onChange={(e) => setNewTodo(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addTodo()} placeholder="Add a to-do…" />
+          <button className="btn btn--ghost checklist-addbtn" onClick={addTodo} disabled={!newTodo.trim()}>Add</button>
+        </div>
+      </div>
+      </div>
+
       {/* Budget vs actual */}
       <div className="section-title">
         Budget vs actual
@@ -177,6 +302,7 @@ export function BudgetScreen() {
       </div>
       <div className="card" data-tour="budget-charts">
         <GroupedBars
+          formatValue={(n) => fmtMoney(n, currency)}
           data={[
             { label: "Income", budget: sum.incomeBudgeted, actual: sum.income },
             { label: "Bills", budget: sum.billsBudgeted, actual: sum.bills },
@@ -188,12 +314,14 @@ export function BudgetScreen() {
       </div>
 
       {/* Actual breakdown */}
+      <div data-tour="budget-breakdown">
       <div className="section-title">
         Actual breakdown
         <HelpTip text="How your actual spending this period splits across bills, expenses, debt and savings." />
       </div>
       <div className="card">
         <Donut
+          formatValue={(n) => fmtMoney(n, currency)}
           slices={[
             { label: "Bills", value: sum.bills, color: BREAKDOWN_COLORS.Bills },
             { label: "Expenses", value: sum.expenses, color: BREAKDOWN_COLORS.Expenses },
@@ -203,8 +331,26 @@ export function BudgetScreen() {
           center={<div style={{ fontWeight: 800, fontSize: 15 }}>{fmtMoney(sum.actualOut, currency)}</div>}
         />
       </div>
+      </div>
+
+      {/* Where does my money go — by line item */}
+      {whereMoney.length > 0 && (
+        <div data-tour="budget-wheremoney">
+          <div className="section-title">
+            Where does my money go
+            <HelpTip text="Your actual spending this period split by line item, largest first (top 6, the rest grouped as Other)." />
+          </div>
+          <div className="card">
+            <Donut
+              size={150}
+              slices={whereMoney.map((s) => ({ label: s.label, value: s.value, color: categoryColor(s.label) }))}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Cash flow */}
+      <div data-tour="budget-cashflow">
       <div className="section-title">
         Cash flow
         <HelpTip text="Your money moving through the period: start balance, plus income and savings, minus bills, expenses and debt, equals what's left." />
@@ -223,8 +369,49 @@ export function BudgetScreen() {
         <CashFlowRow label="− Debt" budget={-sum.debtBudgeted} actual={-sum.debt} currency={currency} />
         <CashFlowRow label="= Left" budget={sum.leftToBudget} actual={sum.leftToSpend} currency={currency} total />
       </div>
+      </div>
+
+      {/* Daily balance (#11) */}
+      {daily && daily.days.length >= 2 && (
+        <div data-tour="budget-daily">
+          <div className="section-title">
+            Daily balance
+            <HelpTip text="Your running balance day by day this period, from real transactions — spot overspending before it turns into an overdraft." />
+          </div>
+          <div className="card">
+            <AreaChart
+              points={daily.days.map((d) => d.running)}
+              xLabels={daily.days.map((d, i) => {
+                const step = Math.max(1, Math.ceil(daily.days.length / 6));
+                return i % step === 0 || i === daily.days.length - 1 ? format(fromISO(d.date), "MMM d") : "";
+              })}
+              height={200}
+              referenceValue={period.startBalance}
+              formatValue={(n) => fmtMoney(n, currency)}
+            />
+            <div className="ledger-scroll mt-3">
+              <table className="ledger">
+                <thead>
+                  <tr><th className="ledger__monthcol">Date</th><th>In</th><th>Out</th><th>Balance</th></tr>
+                </thead>
+                <tbody>
+                  {daily.days.map((d) => (
+                    <tr key={d.date}>
+                      <td className="ledger__monthcol">{format(fromISO(d.date), "MMM d")}</td>
+                      <td className="pos">{d.in ? fmtMoney(d.in, currency) : "—"}</td>
+                      <td>{d.out ? fmtMoney(d.out, currency) : "—"}</td>
+                      <td className={d.running < 0 ? "neg txt-strong" : "txt-strong"}>{fmtMoney(d.running, currency)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Sections */}
+      <div data-tour="budget-lines">
       {KINDS.map(({ value, label }) => {
         const kindRows = rows.filter((r) => r.kind === value);
         const total = kindRows.reduce((a, r) => a + (r.actual || 0), 0);
@@ -265,6 +452,7 @@ export function BudgetScreen() {
           </div>
         );
       })}
+      </div>
 
       <button className="fab" aria-label="Add" data-tour="budget-fab" onClick={() => { setAddKind("expense"); setAddOpen(true); }}>
         <IconPlus />
@@ -279,6 +467,8 @@ export function BudgetScreen() {
         onClose={() => setAddOpen(false)}
         onAdd={(row) => { addMoney(row); setAddOpen(false); }}
       />
+
+      <SetupWizard open={wizardOpen} onClose={() => setWizardOpen(false)} />
 
       <PeriodSheet
         open={periodOpen}
@@ -299,6 +489,10 @@ export function BudgetScreen() {
             { label: range.label, cadence: opts.cadence, startDate: range.startDate, endDate: range.endDate },
             opts.carryStructure ? { carryFrom: period.id, carryBalance: opts.carryBalance } : undefined
           );
+          setPeriodOpen(false);
+        }}
+        onRollover={(startDate) => {
+          rolloverYear(period.id, startDate, 12);
           setPeriodOpen(false);
         }}
       />
@@ -387,6 +581,21 @@ function MoneyRowView({
           {fundName ? ` · → ${fundName}` : ""}
         </div>
       </div>
+      {row.kind !== "income" && (() => {
+        const bkt = effectiveBucket(row) || "needs";
+        const fixed = row.kind === "debt" || row.kind === "saving";
+        return (
+          <button
+            className="bucket-chip"
+            style={{ background: BUCKET_FILL[bkt], color: "var(--surface)" }}
+            title={fixed ? BUCKET_NAME[bkt] : `${BUCKET_NAME[bkt]} — tap to change`}
+            aria-label={`Allocation ${BUCKET_NAME[bkt]}`}
+            onClick={() => { if (!fixed) onChange({ bucket: nextBucket(bkt) }); }}
+          >
+            {bkt[0].toUpperCase()}
+          </button>
+        );
+      })()}
       <div style={{ textAlign: "right" }}>
         <input
           type="number"
@@ -513,6 +722,7 @@ function PeriodSheet({
   currentId,
   onSelect,
   onCreate,
+  onRollover,
 }: {
   open: boolean;
   onClose: () => void;
@@ -526,12 +736,17 @@ function PeriodSheet({
     carryStructure: boolean;
     carryBalance: boolean;
   }) => void;
+  onRollover: (startDate: string) => void;
 }) {
   const [cadence, setCadence] = useState<BudgetCadence>("monthly");
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(todayISO());
   const [carryStructure, setCarryStructure] = useState(true);
   const [carryBalance, setCarryBalance] = useState(true);
+  const latestStart = periods.reduce((a, p) => (p.startDate > a ? p.startDate : a), "");
+  const [rolloverStart, setRolloverStart] = useState(
+    (latestStart ? addMonthsISO(latestStart, 1) : todayISO()).slice(0, 7)
+  );
 
   return (
     <BottomSheet open={open} title="Budget periods" onClose={onClose}>
@@ -602,6 +817,21 @@ function PeriodSheet({
       >
         + New period
       </button>
+
+      <div className="section-title section-title--compact rollover-head">Reuse year after year</div>
+      <p className="muted rollover-note">
+        Create the next 12 monthly periods in one tap, copying this budget's structure with
+        actuals cleared and your balance carried forward. No duplicating a file each year.
+      </p>
+      <div className="spread rollover-row">
+        <div className="field rollover-field">
+          <label className="field__label" htmlFor="rollover-start">Start month</label>
+          <input id="rollover-start" className="input" type="month" value={rolloverStart} onChange={(e) => setRolloverStart(e.target.value)} />
+        </div>
+        <button className="btn btn--primary rollover-btn" disabled={!rolloverStart} onClick={() => onRollover(`${rolloverStart}-01`)}>
+          Create 12 months
+        </button>
+      </div>
     </BottomSheet>
   );
 }

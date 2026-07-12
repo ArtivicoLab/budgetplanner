@@ -14,8 +14,10 @@ interface SyncState {
   error: string;
 
   setStatus: (s: SyncStatus) => void;
-  /** Called after every mutation; debounced push to Sheets when connected. */
-  touch: () => void;
+  /** Called after every mutation; debounced push to Sheets when connected.
+      `collection` marks only that tab dirty so a flush rewrites just what
+      changed (omit → all tabs, the safe fallback). */
+  touch: (collection?: string) => void;
 
   connect: () => Promise<void>;
   /** Link to an existing Sheet by id/URL — the cross-device recovery path. */
@@ -37,7 +39,8 @@ export const useSync = create<SyncState>((set, get) => ({
 
   setStatus: (status) => set({ status }),
 
-  touch: () => {
+  touch: (collection) => {
+    sync.markDirty(collection);
     if (get().connected) {
       sync.scheduleFlush((s) => set({ status: s }));
       return;
@@ -101,7 +104,7 @@ export const useSync = create<SyncState>((set, get) => ({
     if (!get().connected) return;
     set({ busy: true, status: "syncing", error: "" });
     try {
-      await sync.pushAll();
+      await sync.pushAll(true); // manual sync = full push
       set({ busy: false, status: "synced" });
     } catch (e) {
       set({ busy: false, status: "offline", error: e instanceof Error ? e.message : "Sync failed." });

@@ -91,6 +91,20 @@ export function computePeriodRange(cadence: BudgetCadence, startDate: string): P
       const endDate = endOfMonthISO(startDate);
       return { startDate, endDate, label: format(fromISO(startDate), "MMMM yyyy") };
     }
+    case "semimonthly": {
+      // Two periods per month split at the 15th (their 1st & 15th paychecks).
+      const day = parseInt(startDate.slice(8, 10), 10);
+      const first = `${startDate.slice(0, 8)}01`;
+      const mon = format(fromISO(first), "MMM");
+      if (day <= 15) {
+        const s = first;
+        const e = `${startDate.slice(0, 8)}15`;
+        return { startDate: s, endDate: e, label: `${mon} 1–15` };
+      }
+      const s = `${startDate.slice(0, 8)}16`;
+      const e = endOfMonthISO(first);
+      return { startDate: s, endDate: e, label: `${mon} 16–${e.slice(8, 10)}` };
+    }
     case "biweekly": {
       const endDate = addDaysISO(startDate, 13);
       return { startDate, endDate, label: rangeLabel(startDate, endDate) };
