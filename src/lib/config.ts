@@ -4,7 +4,7 @@
 export const LOCAL_MODE = false;
 
 export const APP_NAME = "Budget Planner";
-// New app, its own IndexedDB — deliberately distinct from the Life Planner DB
+// This app has its own IndexedDB name — deliberately distinct from any sibling app's DB
 // so the two never collide when both are served from localhost during dev.
 export const DB_NAME = "ultimatebudget";
 export const DB_VERSION = 5; // 2: Transactions · 3: Accounts · 4: NetWorth · 5: Recurring

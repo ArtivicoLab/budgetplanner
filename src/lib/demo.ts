@@ -3,7 +3,7 @@
 // It is deliberately a DEVICE flag, not user data — it never rides along to the
 // Google Sheet or IndexedDB, so demo content can't contaminate a real account.
 //
-// Backed by a tiny zustand store so the brand ("Life Planner (demo)") and the
+// Backed by a tiny zustand store so the brand ("Budget Planner (demo)") and the
 // Settings toggle re-render the moment it flips, while `isDemo()` stays callable
 // outside React (bootstrap, sync) via getState().
 //
