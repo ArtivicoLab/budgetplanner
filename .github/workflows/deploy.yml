@@ -1,8 +1,9 @@
 name: Deploy to GitHub Pages
 
 on:
-  push:
-    branches: [main]
+  # Manual-only: deploy from the Actions tab ("Run workflow"). Pushing to main
+  # does NOT auto-deploy — this repo is edited by more than one session at once,
+  # so an unrelated push should never ship a production build on its own.
   workflow_dispatch:
 
 permissions:
