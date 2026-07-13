@@ -35,7 +35,7 @@ import {
   SheetNotFoundError,
   writeTab,
 } from "./google/sheets";
-import { forgetToken, requestToken, SCOPE_SHEETS } from "./google/auth";
+import { currentToken, forgetToken, requestToken, SCOPE_SHEETS } from "./google/auth";
 import { isValidAccessCode } from "./access";
 import { isDemo } from "./demo";
 import { DirtyTabs } from "./syncDirty";
@@ -241,6 +241,56 @@ async function syncAccessCode(id: string): Promise<void> {
   }
 }
 
+// ---- Household tab: one member name per row, mirrored from Settings ----
+async function readHouseholdTab(id: string): Promise<string[]> {
+  const data = await batchGet(id, [TAB.Household]).catch(() => ({}) as Record<string, string[][]>);
+  const rows = (data[TAB.Household] ?? []).slice(1); // skip header
+  return rows.map((r) => (r[0] ?? "").trim()).filter(Boolean);
+}
+
+async function writeHouseholdTab(id: string, names: string[]): Promise<void> {
+  await writeTab(id, TAB.Household, [["name"], ...names.map((n) => [n])]);
+}
+
+/** Case-insensitive union that keeps `a`'s order, then appends new names from `b`. */
+function unionMembers(a: string[], b: string[]): string[] {
+  const out = [...a];
+  const seen = new Set(a.map((m) => m.toLowerCase()));
+  for (const m of b) {
+    const k = m.toLowerCase();
+    if (m && !seen.has(k)) { out.push(m); seen.add(k); }
+  }
+  return out;
+}
+
+/**
+ * Roam the household member list through the Sheet's Household tab. Union both
+ * ways (never drop a name at connect time): adopt any names this Sheet already
+ * carries, and contribute any local names the Sheet is missing. Deliberate
+ * removals propagate separately via pushHouseholdMembers() on the editing device.
+ */
+async function syncHousehold(id: string): Promise<void> {
+  const settings = useSettings.getState();
+  const local = settings.householdMembers ?? [];
+  const remote = await readHouseholdTab(id).catch(() => [] as string[]);
+  const merged = unionMembers(local, remote);
+  if (merged.length !== local.length) settings.update({ householdMembers: merged });
+  if (merged.length !== remote.length) await writeHouseholdTab(id, merged).catch(() => {});
+}
+
+/**
+ * Best-effort authoritative push of the local household list to the Sheet, so an
+ * add / rename / remove propagates immediately while connected. Guarded by a
+ * valid silent token so editing a member can never trigger a sign-in popup — if
+ * there's no cached token, the change simply rides along on the next connect().
+ */
+export async function pushHouseholdMembers(): Promise<void> {
+  if (!isConnected() || !currentToken() || isDemo()) return;
+  const id = getSpreadsheetId();
+  if (!id) return;
+  await writeHouseholdTab(id, useSettings.getState().householdMembers ?? []).catch(() => {});
+}
+
 /**
  * Connect a Google account. If a sheet id is remembered we relink + pull;
  * otherwise we create a fresh app-managed spreadsheet and push local data up.
@@ -268,6 +318,7 @@ export async function connect(): Promise<string> {
       await ensureTabs(existing, ALL_TABS);
       await pull();
       await syncAccessCode(existing);
+      await syncHousehold(existing).catch(() => {});
       return existing;
     } catch (err) {
       if (err instanceof SheetNotFoundError) {
@@ -282,6 +333,7 @@ export async function connect(): Promise<string> {
   setSpreadsheetId(id);
   await pushAll(true); // seed the new sheet fully (all tabs + headers)
   await syncAccessCode(id);
+  await syncHousehold(id).catch(() => {});
   return id;
 }
 
@@ -301,6 +353,7 @@ export async function relink(idOrUrl: string): Promise<void> {
   setSpreadsheetId(id);
   await pull();
   await syncAccessCode(id);
+  await syncHousehold(id).catch(() => {});
 }
 
 export function disconnect() {

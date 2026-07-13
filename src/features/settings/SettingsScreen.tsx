@@ -9,6 +9,7 @@ import { activate, resetEverything, resetForNewYear, setDemoMode } from "../../s
 import { isValidAccessCode } from "../../lib/access";
 import { isDemo } from "../../lib/demo";
 import { spreadsheetUrl } from "../../lib/google/sheets";
+import { pushHouseholdMembers } from "../../lib/sync";
 import { navigate } from "../../router";
 import { ALL_NAV_ITEMS, HIDEABLE_NAV_ITEMS } from "../../nav";
 import { APP_VERSION, BUILD_SHA } from "../../lib/config";
@@ -104,16 +105,19 @@ export function SettingsScreen() {
     if (!m || isBuiltInMember(m) || householdMembers.some((x) => x.toLowerCase() === m.toLowerCase())) return;
     update({ householdMembers: [...householdMembers, m] });
     setNewMember("");
+    void pushHouseholdMembers();
   }
 
   function removeMember(m: string) {
     update({ householdMembers: householdMembers.filter((x) => x !== m) });
+    void pushHouseholdMembers();
   }
 
   function renameMember(oldName: string, next: string) {
     const n = next.trim();
     if (!n || n === oldName || isBuiltInMember(n) || householdMembers.some((x) => x.toLowerCase() === n.toLowerCase())) return;
     update({ householdMembers: householdMembers.map((x) => (x === oldName ? n : x)) });
+    void pushHouseholdMembers();
   }
 
   function runYearReset() {

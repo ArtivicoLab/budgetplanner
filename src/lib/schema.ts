@@ -10,6 +10,7 @@ export const SCHEMA_VERSION = 1;
 
 export const TAB = {
   Meta: "Meta",
+  Household: "Household",
   BudgetPeriods: "BudgetPeriods",
   Money: "Money",
   Funds: "Funds",
@@ -22,11 +23,14 @@ export const TAB = {
 } as const;
 
 // Tabs created (headers only) alongside the per-collection sync tabs. Meta is a
-// key/value tab carrying the buyer's Etsy access code across devices.
-export const V2_TABS = [TAB.Meta] as const;
+// key/value tab carrying the buyer's Etsy access code across devices; Household
+// is a plain one-name-per-row list of the buyer's household members (spender/
+// earner suggestions), mirrored from Settings so it roams across devices.
+export const V2_TABS = [TAB.Meta, TAB.Household] as const;
 
 export const HEADERS: Record<string, string[]> = {
   [TAB.Meta]: ["key", "value"],
+  [TAB.Household]: ["name"],
   [TAB.BudgetPeriods]: [
     "id", "label", "startDate", "endDate", "startBalance", "createdAt", "updatedAt", "cadence",
   ],
