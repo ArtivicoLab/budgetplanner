@@ -129,6 +129,12 @@ export async function pushAll(force = false): Promise<void> {
     await writeTab(id, tab, tabValues(tab));
     dirty.clear(tab);
   }
+  // Self-heal the Household tab: on the first sync of a session (or after a
+  // member changes) ensure the tab exists and mirror the current list, so a
+  // Sheet made by an older build gains the tab without the user reconnecting.
+  if (householdDirty) {
+    await writeHousehold(id, useSettings.getState().householdMembers ?? []).catch(() => {});
+  }
 }
 
 // ---- pull: replace local data from the sheet ----
@@ -248,8 +254,25 @@ async function readHouseholdTab(id: string): Promise<string[]> {
   return rows.map((r) => (r[0] ?? "").trim()).filter(Boolean);
 }
 
-async function writeHouseholdTab(id: string, names: string[]): Promise<void> {
+// Self-healing state: the Household tab may not exist yet on a Sheet created by
+// an older build. `householdDirty` starts true so the first normal sync of every
+// session ensures + writes the tab once (no reconnect needed); it goes quiet
+// after, until a member changes. `householdTabEnsured` caches the create-check
+// so we don't re-verify the tab on every write within a session.
+let householdDirty = true;
+let householdTabEnsured = false;
+
+async function ensureHouseholdTab(id: string): Promise<void> {
+  if (householdTabEnsured) return;
+  await ensureTabs(id, [TAB.Household]);
+  householdTabEnsured = true;
+}
+
+/** Ensure the tab exists, write the list, and clear the dirty flag. */
+async function writeHousehold(id: string, names: string[]): Promise<void> {
+  await ensureHouseholdTab(id);
   await writeTab(id, TAB.Household, [["name"], ...names.map((n) => [n])]);
+  householdDirty = false;
 }
 
 /** Case-insensitive union that keeps `a`'s order, then appends new names from `b`. */
@@ -275,20 +298,22 @@ async function syncHousehold(id: string): Promise<void> {
   const remote = await readHouseholdTab(id).catch(() => [] as string[]);
   const merged = unionMembers(local, remote);
   if (merged.length !== local.length) settings.update({ householdMembers: merged });
-  if (merged.length !== remote.length) await writeHouseholdTab(id, merged).catch(() => {});
+  if (merged.length !== remote.length) await writeHousehold(id, merged).catch(() => {});
 }
 
 /**
  * Best-effort authoritative push of the local household list to the Sheet, so an
- * add / rename / remove propagates immediately while connected. Guarded by a
- * valid silent token so editing a member can never trigger a sign-in popup — if
- * there's no cached token, the change simply rides along on the next connect().
+ * add / rename / remove propagates immediately while connected. Marks the list
+ * dirty first, so if the write is skipped (offline / no token / demo) or fails,
+ * the next normal sync (pushAll) heals it. Guarded by a valid silent token so
+ * editing a member can never trigger a sign-in popup.
  */
 export async function pushHouseholdMembers(): Promise<void> {
+  householdDirty = true;
   if (!isConnected() || !currentToken() || isDemo()) return;
   const id = getSpreadsheetId();
   if (!id) return;
-  await writeHouseholdTab(id, useSettings.getState().householdMembers ?? []).catch(() => {});
+  await writeHousehold(id, useSettings.getState().householdMembers ?? []).catch(() => {});
 }
 
 /**
