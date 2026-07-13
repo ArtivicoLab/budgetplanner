@@ -199,9 +199,18 @@ export function SettingsScreen() {
             >
               Open my sheet ↗
             </a>
-            <button className="btn btn--primary btn--stack" disabled={busy} onClick={() => syncNow()}>
+            <button
+              className="btn btn--primary btn--stack"
+              disabled={busy}
+              onClick={() => syncNow()}
+              title="Force an immediate save to your Google Sheet. Your edits already sync automatically in the background, so you only need this to push right now."
+            >
               {busy ? "Syncing…" : "Sync now"}
             </button>
+            <p className="muted settings-hint">
+              Your changes save to your Sheet automatically. "Sync now" just pushes them
+              immediately, handy after a big edit or before you open the app on another device.
+            </p>
             <button className="btn btn--ghost" onClick={disconnect}>
               Disconnect
             </button>
