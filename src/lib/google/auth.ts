@@ -31,6 +31,10 @@ declare global {
               scope?: string;
               error?: string;
             }) => void;
+            // Fired when the popup is closed/dismissed or fails to open — GIS
+            // does NOT call `callback` in these cases, so without this the
+            // connect promise would hang forever ("Connecting…" stuck).
+            error_callback?: (err: { type?: string; message?: string }) => void;
           }) => { requestAccessToken: (opts?: { prompt?: string }) => void };
           revoke: (token: string, done?: () => void) => void;
         };
@@ -107,6 +111,14 @@ export function requestToken(
               scopes: new Set((resp.scope ?? scope).split(" ")),
             };
             resolve(resp.access_token);
+          },
+          // Popup closed by the user, blocked, or failed to open. Reject so the
+          // caller (Settings) can drop out of the "Connecting…" state instead
+          // of waiting on a callback that will never come.
+          error_callback: (err) => {
+            const dismissed =
+              err?.type === "popup_closed" || err?.type === "popup_failed_to_open";
+            reject(new Error(dismissed ? "Connection cancelled." : err?.message || "Connection failed."));
           },
         });
         // '' attempts silent; 'consent' forces the account chooser.
