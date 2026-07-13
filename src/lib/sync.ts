@@ -120,6 +120,7 @@ export async function pushAll(force = false): Promise<void> {
   if (isDemo()) return;
   const id = getSpreadsheetId();
   if (!id) return;
+  await ensureAllTabs(id); // create any tab this build expects but the Sheet lacks
   // Only the tabs that actually changed (all when forced or nothing tracked).
   // Sequential to stay well under rate limits for personal data volumes. A tab
   // is cleared from `dirty` only after its write succeeds, so a mid-flush
@@ -149,6 +150,7 @@ function parseRows<T>(rows: string[][], fromRow: (r: string[]) => T): T[] {
 export async function pull(): Promise<void> {
   const id = getSpreadsheetId();
   if (!id) return;
+  await ensureAllTabs(id); // create any missing tab before reading, so batchGet never 400s
   const data = await batchGet(id, PUSH_TABS);
 
   // Delete markers first: union local + remote tombstones (newest per id),
@@ -254,23 +256,24 @@ async function readHouseholdTab(id: string): Promise<string[]> {
   return rows.map((r) => (r[0] ?? "").trim()).filter(Boolean);
 }
 
-// Self-healing state: the Household tab may not exist yet on a Sheet created by
-// an older build. `householdDirty` starts true so the first normal sync of every
-// session ensures + writes the tab once (no reconnect needed); it goes quiet
-// after, until a member changes. `householdTabEnsured` caches the create-check
-// so we don't re-verify the tab on every write within a session.
-let householdDirty = true;
-let householdTabEnsured = false;
-
-async function ensureHouseholdTab(id: string): Promise<void> {
-  if (householdTabEnsured) return;
-  await ensureTabs(id, [TAB.Household]);
-  householdTabEnsured = true;
+// Always make sure every tab this build expects actually exists before we read
+// or write, so a Sheet created by an older build self-gains any tab a newer
+// build adds (Household, or anything future) on the very next sync, with no
+// reconnect. Cached per session (one getMeta) so we don't re-check every call.
+let tabsEnsured = false;
+async function ensureAllTabs(id: string): Promise<void> {
+  if (tabsEnsured) return;
+  await ensureTabs(id, ALL_TABS);
+  tabsEnsured = true;
 }
 
-/** Ensure the tab exists, write the list, and clear the dirty flag. */
+// `householdDirty` starts true so the first normal sync of every session writes
+// the Household list once (goes quiet after, re-arms on a member change).
+let householdDirty = true;
+
+/** Ensure tabs exist, write the household list, and clear the dirty flag. */
 async function writeHousehold(id: string, names: string[]): Promise<void> {
-  await ensureHouseholdTab(id);
+  await ensureAllTabs(id);
   await writeTab(id, TAB.Household, [["name"], ...names.map((n) => [n])]);
   householdDirty = false;
 }
