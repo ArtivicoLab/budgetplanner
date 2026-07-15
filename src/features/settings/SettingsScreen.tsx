@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Segmented } from "../../components/Segmented";
 import { BottomSheet } from "../../components/BottomSheet";
+import { LockGatedButton } from "../../components/LockGatedButton";
 import { HelpTip } from "../../components/HelpTip";
 import { IconClose } from "../../components/icons";
 import { useSettings } from "../../stores/useSettings";
 import { useSync } from "../../stores/useSync";
 import { activate, resetEverything, resetForNewYear, setDemoMode } from "../../stores/bootstrap";
-import { isValidAccessCode } from "../../lib/access";
+import { currentLockoutMs, tryUnlock } from "../../lib/access";
 import { isDemo } from "../../lib/demo";
 import { spreadsheetUrl } from "../../lib/google/sheets";
 import { pushHouseholdMembers } from "../../lib/sync";
@@ -15,6 +16,15 @@ import { ALL_NAV_ITEMS, HIDEABLE_NAV_ITEMS } from "../../nav";
 import { APP_VERSION, BUILD_SHA } from "../../lib/config";
 import { categoryColor, PICKABLE_CATEGORY_COLORS } from "../../lib/ui";
 import { FAMILY_SHARED, isBuiltInMember } from "../../lib/household";
+
+function formatWait(ms: number): string {
+  const s = Math.ceil(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.ceil(s / 60);
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"}`;
+  const h = Math.ceil(m / 60);
+  return `${h} hour${h === 1 ? "" : "s"}`;
+}
 
 export function SettingsScreen() {
   const {
@@ -34,6 +44,15 @@ export function SettingsScreen() {
   const [relinkError, setRelinkError] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [demoOn, setDemoOn] = useState(isDemo());
+
+  useEffect(() => {
+    if (activated) return;
+    void currentLockoutMs().then((ms) => {
+      if (ms > 0) setCodeError(`Too many attempts. Try again in ${formatWait(ms)}.`);
+    });
+    // Only needs to check once, on mount — activated flips this section away.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function toggleDemo(on: boolean) {
     setDemoOn(on);
@@ -56,11 +75,19 @@ export function SettingsScreen() {
   }
 
   function submitCode() {
-    if (!isValidAccessCode(codeInput)) {
-      setCodeError("That code doesn't look right. Check your Etsy order confirmation.");
-      return;
-    }
-    void activate(codeInput).then((ok) => {
+    const code = codeInput.trim();
+    if (!code) return;
+    setCodeError("");
+    void tryUnlock(code).then(async (result) => {
+      if (!result.ok) {
+        setCodeError(
+          result.retryAfterMs
+            ? `Too many attempts. Try again in ${formatWait(result.retryAfterMs)}.`
+            : "That code doesn't look right. Check your Etsy order confirmation."
+        );
+        return;
+      }
+      const ok = await activate(code);
       if (ok) { setCodeError(""); setCodeInput(""); }
       else setCodeError("That code doesn't look right. Check your Etsy order confirmation.");
     });
@@ -551,16 +578,18 @@ export function SettingsScreen() {
 
       <div className="section-title section-title--alert">Danger zone</div>
       <div className="card">
-        <button
-          className="btn btn--danger"
-          onClick={() => {
+        <LockGatedButton
+          label="Start over (erase everything)"
+          onConfirm={() => {
+            // TODO: TrackerB has no confirmDialog()/ConfirmHost yet (unlike
+            // TrackerA/TrackerC) — kept the pre-existing native confirm()
+            // here rather than silently port that whole system as part of
+            // an unrelated "add the padlocks" ask. See CLAUDE.md.
             if (confirm("Delete all planner data on this device? This cannot be undone.")) {
               void resetEverything();
             }
           }}
-        >
-          Start over (erase everything)
-        </button>
+        />
       </div>
 
       <div className="settings-footer">

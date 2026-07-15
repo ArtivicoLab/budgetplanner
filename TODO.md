@@ -146,6 +146,45 @@ entries below predate the conversion and refer to removed modules — treat as h
   works fully without Sheets in the meantime, so this doesn't block selling
   the core product, only the optional sync feature.
 
+## 🔒 Sync/auth bugs — fix before selling
+Same Google Sheets sync architecture TrackerA (Life Planner) shipped with real paying
+customers, then found and fixed a long, hard-won list of real bugs in — several caused
+genuine, reported data loss for a buyer. TrackerB forked the chassis before most of those
+fixes existed, so they're still live here. Full details + exact fix patterns are in this
+file's own `CLAUDE.md`, under "Google Sheet as database" — start there, it names the
+file/line and what TrackerA's corrected version looks like for each one. Ask Claude to
+help port any of these if picking one back up — it did the original TrackerA fixes and
+this TrackerB audit, and already knows the reasoning behind each one.
+- [ ] `disconnect()` deletes the remembered spreadsheet id (`LS_ID`) — next connect()
+      creates a brand-new sheet instead of relinking.
+- [ ] `authedFetch` can pop an interactive Google sign-in from a background timer with no
+      user gesture behind it — browsers block it silently, sync dies until reload.
+- [ ] No timeout on the raw `fetch()` or on `requestToken()` — a dropped connection or a
+      GIS callback that never fires can hang forever.
+- [ ] One shared token slot for BOTH Sheets and Calendar scopes — getting one evicts the
+      other, ping-ponging a popup on every save with a reminder set.
+- [ ] Token cache is in-memory only, wiped by any reload (incl. the app's own auto-update
+      reload) even when the real token still had time left.
+- [ ] `connect()`'s reconnect-to-existing-sheet path calls `pull()` with no push first —
+      **re-verify severity before porting verbatim**: `pull()` has since been rewritten to
+      do a row-granular `updatedAt` merge + tombstones (`lib/merge.ts`), not a blind
+      replace, which may already substantially mitigate this one. Confirm before assuming
+      it's still the same data-loss shape as TrackerA's.
+- [ ] **`window.confirm()` still used, confirmed live**: `SettingsScreen.tsx:557` — a raw
+      system popup gates "Start over (erase everything)," the single scariest action in
+      the app. Swap for `confirmDialog({..., danger: true})` from `useConfirm.ts`.
+- [ ] Dirty-tab tracking (`syncDirty.ts`) is in-memory only — a reload before a push
+      completes silently drops the pending push behind a falsely-confident "Synced" status.
+- [ ] Sync pill shows a persistence claim during demo mode, contradicting the demo
+      banner's own "Nothing here is saved" right above it (`demo` is read but never
+      actually used in either `Header.tsx` or `Sidebar.tsx`'s pill).
+- [ ] **Biggest one — no reauth/retry subsystem exists at all**: no `needsReauth` state,
+      no retry-with-backoff on push failure (one attempt, then just "offline," nothing
+      retries a blip on its own), no proactive token-warming, no click handler on the
+      sync pill, no persistent "reconnect" banner. TrackerA built this over many
+      iterations; it needs building here, not just porting a patch. See CLAUDE.md's
+      writeup for the 5-part breakdown.
+
 ## 🎯 Competitor parity — "Ultimate Annual Budget" spreadsheets on Etsy
 (Gap analysis vs the top-selling annual-budget spreadsheet listings, 2026-07-06.
 Already at parity: balance area chart, income-vs-spending combo, left-to-spend ring,
